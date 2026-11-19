@@ -290,11 +290,28 @@ pub fn youtube_error(error: &str, browser_session: bool) -> String {
         };
     }
     if browser_session
+        && [
+            "could not copy",
+            "could not find",
+            "failed to decrypt",
+            "could not decrypt",
+            "permission denied",
+            "operation not permitted",
+            "unable to open",
+            "database is locked",
+        ]
+        .iter()
+        .any(|s| lower.contains(s))
         && (lower.contains("cookie") || lower.contains("keychain") || lower.contains("keyring"))
     {
-        return "Não foi possível ler a sessão do navegador. Confirme o navegador em Configurações → YouTube. No macOS, autorize o acesso ao Chaves quando solicitado; se o banco de cookies estiver em uso, feche o navegador e tente novamente.".into();
+        return "YouTube: não foi possível ler a sessão do navegador. Confirme o navegador em Configurações → YouTube. No macOS, autorize o acesso ao Chaves quando solicitado; se o banco de cookies estiver em uso, feche o navegador e tente novamente.".into();
     }
     error.into()
+}
+pub fn youtube_session_error(error: &str) -> bool {
+    error.starts_with("YouTube: a sessão")
+        || error.starts_with("YouTube: entre na conta")
+        || error.starts_with("YouTube: não foi possível ler a sessão")
 }
 
 pub fn source_url(raw: &str) -> Result<(String, String)> {
@@ -497,6 +514,13 @@ mod tests {
             youtube_error("ERROR: Sign in to confirm you’re not a bot", true).contains("renovada")
         );
         assert!(youtube_error("Could not decrypt cookies with Keychain", true).contains("Chaves"));
+        let generic = "Requested format is not available. Try --cookies-from-browser or --cookies.";
+        assert_eq!(youtube_error(generic, true), generic);
+        assert!(youtube_session_error(&youtube_error(
+            "Sign in to confirm you're not a bot",
+            true
+        )));
+        assert!(!youtube_session_error(&youtube_error(generic, true)));
         assert_eq!(
             youtube_error("Video unavailable", true),
             "Video unavailable"

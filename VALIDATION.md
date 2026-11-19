@@ -40,7 +40,7 @@ Clone update:
 - TikTok public video discovery returned seven real candidates above 100,000 views. The leading candidate reported 9.8 million views. Its original download retained 1080×1920 resolution, 11.2-second duration, and the selected H.265 source format. Requests used public pages without browser credentials.
 - Browser checks passed for the Clone defaults, one-click discovery/download, search-only mode, selected downloads, source links, failure visibility, input bounds, and responsive layouts. The existing seven browser checks also passed.
 - A controlled downloader fixture verified the maximum-quality format/sort arguments and byte-identical file retention when a later video in the batch failed. The manifest recorded the completed download and the failure separately.
-- TikTok keyword search relies on a public video index and verifies counts with yt-dlp. An initial domain-operator query returned unrelated results; the working implementation uses a topic query plus a second phrasing when no TikTok links are found. Discovery remains bounded to 30 Shorts per topic and 12 TikTok candidates per search, and cannot guarantee platform-wide top results.
+- TikTok keyword search relies on a public video index and verifies counts with yt-dlp. An initial domain-operator query returned unrelated results; the working implementation uses a topic query plus a second phrasing when no TikTok links are found. That initial 12-candidate limit was subsequently replaced by the paginated search described below; results still cannot guarantee platform-wide top rankings.
 
 
 Clone relevance update:
@@ -66,3 +66,14 @@ YouTube session update:
 - YouTube may still require the user to renew their browser login or complete a confirmation. Browser reopening was exercised, but native page inspection remains blocked by macOS Accessibility permission. No CAPTCHA solving, alternate-identity rotation or access-control bypass was used. The end-to-end check covered Chrome on this Mac; other browsers/platforms were not exercised.
 
 - The rebuilt macOS app passed strict signature verification, was installed on the Desktop and relaunched. The local YouTube browser setting was set to Chrome after the successful real-session test; other preferences and media were preserved.
+
+## Clone quantity and exact view counts (2026-11-19)
+
+- Raised search and batch-download limits to 10,000; the UI remembers the desired count. The target applies to search-only and automatic downloads. No 10,000-file download was performed.
+- Replaced the fixed 12-candidate cap with a target-scaled finite budget and ordinary YouTube result continuations; TikTok uses four distinct topic-preserving queries because an experimental Bing page offset repeated the same URLs. Duplicate URLs are checked once.
+- Deterministic regression checks cover the inclusive 100,000 minimum, 13 consecutive below-minimum candidates followed by valid candidates, 10,000/10,001 bounds, old cached results, continuation parsing, and avoiding a misleading Keychain message for unrelated errors containing cookie advice.
+- The screenshot's 4.4 million and 2 million views both exceed 100,000. Cards now show full counts; the summary separates rejection/failure totals and actual versus requested results.
+- A normal signed-in Chrome metadata request to the reported YouTube video returned a sign-in confirmation requirement again. Authentication remains dependent on YouTube; Clone now stops repeated YouTube checks on a session failure and continues TikTok.
+- The full 12-test browser suite passed, then all five Clone tests passed after adding 100-results-per-page rendering and selecting a synthetic 10,000-result batch. Eleven deterministic Rust tests passed; the opt-in real YouTube continuation test also passed and confirmed new URLs on the second page.
+- A real TikTok search → six-frame Codex verification → original download passed in 144 seconds: one requested/approved result with 4,400,000 views, 1080×1920 output, 7.9 seconds, source format `bytevc1_1080p_2284499-1`. Native click inspection still reports Accessibility permission unavailable.
+- The final arm64 app rebuilt, passed strict signature verification, replaced the Desktop bundle with a retained backup, and relaunched. Existing application data was left unchanged.

@@ -7,7 +7,8 @@ export interface Preferences {encoder:string;aiMode:'local'|'codex';localModel:s
 export interface Encoder {id:string;label:string;available:boolean;detail:string}
 export interface Live {id:string;title:string;url:string;provider:string;embedUrl:string|null;phase:string;startedAt:number;bufferSeconds:number;encoder:string}
 export interface CloneVideo {id:string;url:string;title:string;provider:string;creator:string;views:number;approximateViews:boolean;duration:number|null;thumbnail:string|null;tags:string[];verification:{topic:string;evidence:string;confidence:number}|null}
-export interface Discovery {query:string;minViews:number;searchedAt:number;videos:CloneVideo[];warnings:string[]}
+export const MAX_CLONE_VIDEOS=10000;
+export interface Discovery {requestedCount:number;checked:number;belowMinimum:number;unrelated:number;unavailable:number;blocked:number;query:string;minViews:number;searchedAt:number;videos:CloneVideo[];warnings:string[]}
 export interface Snapshot {discovery:Discovery;library:Media[];jobs:Job[];live:Live|null;tools:{name:string;path:string|null;ready:boolean}[];encoders:Encoder[];preferences:Preferences;activeEncoder:string;outputDir:string}
 export interface SourceInfo {url:string;id:string;title:string;provider:string;duration:number|null;isLive:boolean;thumbnail:string|null;channel:string}
 export interface Word {start:number;end:number;text:string}
@@ -16,6 +17,6 @@ export interface AiStatus {whisperReady:boolean;modelReady:boolean;localModels:s
 export interface ClipOptions {count:number;min:number;max:number;format:Format;lang:string}
 export type Run=<T=unknown>(command:string,args?:Record<string,unknown>)=>Promise<T|null>;
 export const defaultStyle:CaptionStyle={preset:'classic',font:'Arial Black',size:72,color:'#ffffff',accent:'#ffe500',uppercase:true,wordsPerLine:3};
-export const emptySnapshot:Snapshot={discovery:{query:"",minViews:100000,searchedAt:0,videos:[],warnings:[]},library:[],jobs:[],live:null,tools:[],encoders:[],preferences:{encoder:'auto',aiMode:'local',localModel:'gemma3:1b',youtubeBrowser:'none',captions:defaultStyle},activeEncoder:'Verificando…',outputDir:''};
+export const emptySnapshot:Snapshot={discovery:{requestedCount:0,checked:0,belowMinimum:0,unrelated:0,unavailable:0,blocked:0,query:"",minViews:100000,searchedAt:0,videos:[],warnings:[]},library:[],jobs:[],live:null,tools:[],encoders:[],preferences:{encoder:'auto',aiMode:'local',localModel:'gemma3:1b',youtubeBrowser:'none',captions:defaultStyle},activeEncoder:'Verificando…',outputDir:''};
 export const clock=(s:number)=>`${Math.floor(s/3600)?`${Math.floor(s/3600)}:`:''}${String(Math.floor(s/60)%60).padStart(2,'0')}:${String(Math.floor(s)%60).padStart(2,'0')}`;
 export const styles=[['classic','Clássico'],['neon','Neon'],['karaoke','Karaokê'],['pop','Pop'],['minimal','Mínimo'],['box','Caixa']];

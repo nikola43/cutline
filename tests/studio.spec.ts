@@ -14,8 +14,8 @@ async function desktop(page:Page){
       if(command==='inspect_source')return {url:args.url,id:'video-1',title:'Vídeo remoto',provider:'YouTube',duration:120,isLive:false,thumbnail:null,channel:'Canal'};
       if(command==='generate_package'){if(w.testSlowImport)return 'job-progress';state.jobs=[{id:'job-1',kind:'package',label:'5 clipes prontos',status:'completed',message:'Concluído',progress:1,outputId:'clip-1',outputDir:'/exports/package-1',createdAt:1700000000}];return 'job-1';}
       if(command==='clone_search'){
-        state.discovery={query:args.request.query,minViews:args.request.minViews,searchedAt:1700000002,videos:[
-          {id:'YouTube:abcdefghijk',url:'https://www.youtube.com/shorts/abcdefghijk',title:'GTA 6: melhor momento',provider:'YouTube',creator:'gaming',views:2000000,approximateViews:true,duration:null,thumbnail:null,tags:['gta6'],verification:{topic:'GTA 6',evidence:'Cenas do trailer aparecem nos quadros.',confidence:0.96}},
+        state.discovery={requestedCount:args.request.count,checked:20,belowMinimum:5,unrelated:10,unavailable:3,blocked:0,query:args.request.query,minViews:args.request.minViews,searchedAt:1700000002,videos:[
+          {id:'YouTube:abcdefghijk',url:'https://www.youtube.com/shorts/abcdefghijk',title:'GTA 6: melhor momento',provider:'YouTube',creator:'gaming',views:2000000,approximateViews:false,duration:30,thumbnail:null,tags:['gta6'],verification:{topic:'GTA 6',evidence:'Cenas do trailer aparecem nos quadros.',confidence:0.96}},
           {id:'TikTok:1234567890123456789',url:'https://www.tiktok.com/@gaming/video/1234567890123456789',title:'Jogada incrível',provider:'TikTok',creator:'gaming',views:500000,approximateViews:false,duration:35,thumbnail:null,tags:['gta6'],verification:{topic:'GTA 6',evidence:'Quadros mostram o cenário do jogo.',confidence:0.94}}],warnings:[]};
         state.jobs=[{id:'clone-job',kind:args.request.download?'clone_download':'clone_search',label:'Clone',status:'completed',message:'Concluído',progress:1,outputId:null,outputDir:args.request.download?'/exports/clone-1':null,createdAt:1700000002}];return 'clone-job';
       }
@@ -142,6 +142,10 @@ test('Clone discovers high-view videos, auto-downloads defaults, and exposes sou
   await expect(page.getByRole('textbox',{name:'Temas'})).toHaveValue('GTA 6');
   await page.getByRole('button',{name:'Buscar e baixar',exact:true}).click();
   await expect(page.getByRole('heading',{name:'GTA 6: melhor momento'})).toBeVisible();
+  await expect(page.getByText('2.000.000 visualizações',{exact:true})).toBeVisible();
+  await expect(page.getByText('500.000 visualizações',{exact:true})).toBeVisible();
+  await expect(page.locator('.clone-search-summary')).toContainText('2 de 5 vídeos desejados · mínimo 100.000 visualizações');
+  await expect(page.locator('.clone-search-summary')).toContainText('5 abaixo do mínimo');
   const calls=await page.evaluate(()=>(window as any).testCalls);
   expect(calls).toContainEqual({command:'clone_search',args:{request:{query:'GTA 6',platform:'both',minViews:100000,count:5,download:true}}});
   await expect.poll(()=>page.evaluate(()=>(window as any).testCalls.some((c:any)=>c.command==='reveal_job_output'&&c.args.id==='clone-job'))).toBe(true);
@@ -159,9 +163,9 @@ test('Clone discovers high-view videos, auto-downloads defaults, and exposes sou
 
 test('Clone search-only never opens a folder; invalid input and source failures stay visible',async({page})=>{
   await desktop(page);await page.getByRole('button',{name:'Clone',exact:true}).click();
-  await page.getByRole('spinbutton',{name:'Vídeos para baixar'}).fill('11');
+  await page.getByRole('spinbutton',{name:'Vídeos desejados'}).fill('10001');
   await expect(page.getByRole('button',{name:'Buscar e baixar',exact:true})).toBeDisabled();
-  await page.getByRole('spinbutton',{name:'Vídeos para baixar'}).fill('2');
+  await page.getByRole('spinbutton',{name:'Vídeos desejados'}).fill('2');
   await page.getByRole('combobox',{name:'Plataformas'}).selectOption('tiktok');
   await page.getByRole('button',{name:'Somente buscar',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Jogada incrível'})).toBeVisible();
@@ -207,4 +211,36 @@ test('YouTube browser session is opt-in, persists, and reports failed saves',asy
   await session.selectOption('firefox');
   await expect(page.getByRole('alert')).toContainText('Save failed');
   await expect(session).toHaveValue('chrome');
+});
+
+
+test('Clone accepts 10,000 videos and remembers the requested count',async({page})=>{
+  await desktop(page);await page.getByRole('button',{name:'Clone',exact:true}).click();
+  const count=page.getByRole('spinbutton',{name:'Vídeos desejados'});
+  await count.fill('10000');
+  await expect(page.getByRole('button',{name:'Somente buscar',exact:true})).toBeEnabled();
+  await page.reload();await page.getByRole('button',{name:'Clone',exact:true}).click();
+  await expect(count).toHaveValue('10000');
+  await page.getByRole('button',{name:'Somente buscar',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).testCalls)).toContainEqual({command:'clone_search',args:{request:{query:'GTA 6',platform:'both',minViews:100000,count:10000,download:false}}});
+  await expect(page.locator('.clone-search-summary')).toContainText('2 de 10.000 vídeos desejados');
+});
+
+
+test('Clone paginates 10,000 results and can select the whole batch',async({page})=>{
+  await desktop(page);await page.getByRole('button',{name:'Clone',exact:true}).click();
+  await page.evaluate(()=>{
+    const s=(window as any).testState;
+    s.discovery={...s.discovery,requestedCount:10000,searchedAt:1,videos:Array.from({length:10000},(_,i)=>({id:`YouTube:${i}`,url:`https://www.youtube.com/shorts/${String(i).padStart(11,'0')}`,title:`Vídeo ${i+1}`,provider:'YouTube',creator:'',views:100000,approximateViews:false,duration:30,thumbnail:null,tags:[],verification:{topic:'GTA 6',evidence:'Trailer',confidence:0.99}}))};
+  });
+  await expect(page.locator('.clone-card')).toHaveCount(100);
+  await expect(page.getByText('Página 1 de 100',{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Próxima página'}).click();
+  await expect(page.getByRole('heading',{name:'Vídeo 101',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Selecionar todos (10.000)'}).click();
+  await page.getByRole('button',{name:'Baixar selecionados (10000)'}).click();
+  const urls=await page.evaluate(()=>(window as any).testCalls.find((c:any)=>c.command==='clone_download').args.urls);
+  expect(urls).toHaveLength(10000);
+  expect(urls[0]).toBe('https://www.youtube.com/shorts/00000000000');
+  expect(urls[9999]).toBe('https://www.youtube.com/shorts/00000009999');
 });

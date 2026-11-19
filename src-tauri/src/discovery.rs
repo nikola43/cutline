@@ -17,7 +17,7 @@ use std::{
 };
 use url::Url;
 
-const MAX_CANDIDATES: usize = 12;
+const MAX_CLONE_VIDEOS: usize = 10_000;
 const QUALITY: &str = "bestvideo*+bestaudio/best";
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -45,13 +45,19 @@ pub struct Verification {
     pub confidence: f64,
 }
 #[derive(Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Discovery {
     pub query: String,
     pub min_views: u64,
     pub searched_at: u64,
     pub videos: Vec<CloneVideo>,
     pub warnings: Vec<String>,
+    pub requested_count: usize,
+    pub checked: usize,
+    pub below_minimum: usize,
+    pub unrelated: usize,
+    pub unavailable: usize,
+    pub blocked: usize,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,6 +67,20 @@ pub struct CloneRequest {
     pub min_views: u64,
     pub count: usize,
     pub download: bool,
+}
+impl CloneRequest {
+    fn validate(&self) -> Result<()> {
+        topics(&self.query)?;
+        if !["both", "youtube", "tiktok"].contains(&self.platform.as_str())
+            || !(1..=MAX_CLONE_VIDEOS).contains(&self.count)
+            || self.min_views > 1_000_000_000_000
+        {
+            return Err(
+                "Choose a platform, 1–10,000 videos and a valid minimum view count.".into(),
+            );
+        }
+        Ok(())
+    }
 }
 
 // Discovery and downloads only accept canonical public video URLs, never arbitrary hosts.
@@ -265,15 +285,19 @@ fn tiktok_links(html: &str) -> Vec<String> {
     }
     links
 }
-fn public_html(url: Url) -> Result<String> {
-    let response = reqwest::blocking::Client::builder()
+fn public_search(url: Url, payload: Option<&Value>) -> Result<String> {
+    let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(25))
         .https_only(true)
         .redirect(reqwest::redirect::Policy::limited(3))
         .user_agent("Mozilla/5.0")
         .build()
-        .map_err(err)?
-        .get(url)
+        .map_err(err)?;
+    let request = match payload {
+        Some(body) => client.post(url).json(body),
+        None => client.get(url),
+    };
+    let response = request
         .send()
         .map_err(err)?
         .error_for_status()
@@ -303,16 +327,37 @@ fn compact_views(text: &str) -> Option<u64> {
     let value = n.parse::<f64>().ok()? * multiplier;
     (value.is_finite() && (0.0..=1e12).contains(&value)).then_some(value as u64)
 }
-fn youtube_results(html: &str) -> Result<Vec<CloneVideo>> {
+struct YouTubePage {
+    videos: Vec<CloneVideo>,
+    cursor: Option<(String, String)>,
+}
+fn youtube_results(html: &str) -> Result<YouTubePage> {
     let data = html
         .split_once("var ytInitialData =")
         .ok_or("YouTube search data unavailable.")?
         .1
         .trim_start();
     let value = Value::deserialize(&mut serde_json::Deserializer::from_str(data)).map_err(err)?;
-    fn visit(value: &Value, depth: usize, videos: &mut Vec<CloneVideo>) {
-        if depth > 80 || videos.len() >= 30 {
+    let version = html.split("ytcfg.set(").skip(1).find_map(|part| {
+        let config = Value::deserialize(&mut serde_json::Deserializer::from_str(part)).ok()?;
+        config["INNERTUBE_CONTEXT"]["client"]["clientVersion"]
+            .as_str()
+            .map(str::to_owned)
+    });
+    Ok(youtube_page(&value, version.as_deref().unwrap_or("")))
+}
+fn youtube_page(value: &Value, version: &str) -> YouTubePage {
+    fn visit(value: &Value, depth: usize, page: &mut YouTubePage, version: &str) {
+        if depth > 80 {
             return;
+        }
+        if let Some(token) = value
+            .pointer("/continuationItemRenderer/continuationEndpoint/continuationCommand/token")
+            .and_then(Value::as_str)
+        {
+            if !version.is_empty() {
+                page.cursor = Some((version.into(), token.into()));
+            }
         }
         if let Some(model) = value.get("shortsLockupViewModel") {
             let endpoint = &model["onTap"]["innertubeCommand"]["reelWatchEndpoint"];
@@ -326,7 +371,7 @@ fn youtube_results(html: &str) -> Result<Vec<CloneVideo>> {
                 if let Some(video) =
                     video_from_info(&info, &format!("https://www.youtube.com/shorts/{id}"), true)
                 {
-                    videos.push(video);
+                    page.videos.push(video);
                 }
             }
             return;
@@ -334,25 +379,74 @@ fn youtube_results(html: &str) -> Result<Vec<CloneVideo>> {
         match value {
             Value::Object(map) => {
                 for v in map.values() {
-                    visit(v, depth + 1, videos);
+                    visit(v, depth + 1, page, version);
                 }
             }
             Value::Array(array) => {
                 for v in array {
-                    visit(v, depth + 1, videos);
+                    visit(v, depth + 1, page, version);
                 }
             }
             _ => {}
         }
     }
-    let mut videos = Vec::new();
-    visit(&value, 0, &mut videos);
-    Ok(videos)
+    let mut page = YouTubePage {
+        videos: Vec::new(),
+        cursor: None,
+    };
+    visit(value, 0, &mut page, version);
+    page
+}
+fn youtube_next(version: &str, token: &str) -> Result<YouTubePage> {
+    let body = json!({"context":{"client":{"clientName":"WEB","clientVersion":version,"hl":"en"}},"continuation":token});
+    let data = public_search(
+        Url::parse("https://www.youtube.com/youtubei/v1/search").unwrap(),
+        Some(&body),
+    )?;
+    Ok(youtube_page(
+        &serde_json::from_str(&data).map_err(err)?,
+        version,
+    ))
 }
 fn cancelled(ctl: &AtomicBool) -> Result<()> {
     if ctl.load(Ordering::Relaxed) {
         Err("Cancelled".into())
     } else {
+        Ok(())
+    }
+}
+
+impl Discovery {
+    fn review(
+        &mut self,
+        url: &str,
+        info: &Value,
+        topics: &[String],
+        verify: impl FnOnce(&[String]) -> Result<Option<Verification>>,
+    ) -> Result<()> {
+        let Some(mut video) = video_from_info(info, url, false) else {
+            self.unavailable += 1;
+            return Ok(());
+        };
+        if video.views < self.min_views {
+            self.below_minimum += 1;
+            return Ok(());
+        }
+        if !video.duration.is_some_and(|d| d <= 180.) {
+            self.unavailable += 1;
+            return Ok(());
+        }
+        let matched = matching_topics(info, topics);
+        if matched.is_empty() {
+            self.unrelated += 1;
+            return Ok(());
+        }
+        video.verification = verify(&matched)?;
+        if video.verification.is_some() {
+            self.videos.push(video);
+        } else {
+            self.unrelated += 1;
+        }
         Ok(())
     }
 }
@@ -364,13 +458,7 @@ impl Engine {
         Ok(())
     }
     pub fn clone_search(self: &Arc<Self>, request: CloneRequest) -> Result<String> {
-        topics(&request.query)?;
-        if !["both", "youtube", "tiktok"].contains(&request.platform.as_str())
-            || !(1..=10).contains(&request.count)
-            || request.min_views > 1_000_000_000_000
-        {
-            return Err("Choose a platform, 1–10 downloads and a valid minimum view count.".into());
-        }
+        request.validate()?;
         let kind = if request.download {
             "clone_download"
         } else {
@@ -381,6 +469,18 @@ impl Engine {
             if request.download {
                 e.clone_batch(&videos[..videos.len().min(request.count)], &job, &ctl)?;
             }
+            if let Some(j) = e.jobs.lock().unwrap().iter_mut().find(|j| j.id == job) {
+                j.label = format!(
+                    "Clone · {} de {} vídeos {}",
+                    videos.len(),
+                    request.count,
+                    if request.download {
+                        "salvos"
+                    } else {
+                        "encontrados"
+                    }
+                );
+            }
             Ok(None)
         })
     }
@@ -390,166 +490,161 @@ impl Engine {
         job: &str,
         ctl: &AtomicBool,
     ) -> Result<Vec<CloneVideo>> {
+        request.validate()?;
         let mut result = Discovery {
             query: request.query.clone(),
             min_views: request.min_views,
+            requested_count: request.count,
             searched_at: now(),
             ..Default::default()
         };
         self.store_discovery(&result)?;
         self.phase(job, "Preparando verificação visual…", None);
         self.ensure_vision_ai(ctl)?;
-        let mut candidates = Vec::new();
-        let mut pool = Vec::new();
-        let mut metadata = HashMap::new();
         let topics = topics(&request.query)?;
-        let candidates_per_topic = MAX_CANDIDATES / topics.len();
-        for topic in &topics {
-            cancelled(ctl)?;
-            let hashtag: String = topic
-                .chars()
-                .filter(|c| c.is_alphanumeric() || *c == '_')
-                .flat_map(char::to_lowercase)
-                .collect();
-            if request.platform != "tiktok" {
-                self.phase(job, &format!("YouTube Shorts · buscando {topic}…"), None);
-                let mut url = Url::parse("https://www.youtube.com/results").unwrap();
-                url.query_pairs_mut()
-                    .append_pair("search_query", topic)
-                    .append_pair("sp", "EgIQCQ%3D%3D");
-                url.query_pairs_mut().append_pair("hl", "en");
-                // shortcut: parse the first search page until yt-dlp supports this Shorts renderer.
-                match public_html(url).and_then(|html| youtube_results(&html)) {
-                    Ok(videos) if !videos.is_empty() => pool.extend(videos),
-                    _ => result.warnings.push(format!(
-                        "YouTube: não foi possível consultar Shorts para {topic}."
-                    )),
-                }
+        let mut seen = HashSet::new();
+        let mut cursors: HashMap<String, (String, String)> = HashMap::new();
+        let mut used_cursors = HashSet::new();
+        let mut youtube_blocked = false;
+        let mut warned_failure = false;
+        let budget = (request.count * 10).max(60);
+        // shortcut: finite search budget; add more discovery sources if public results run out.
+        let pages = request.count.div_ceil(5).max(4);
+        'search: for page in 0..pages {
+            let mut candidates = Vec::new();
+            for topic in &topics {
                 cancelled(ctl)?;
-                rank(&mut pool, request.min_views);
-                self.store_discovery(&result)?;
+                if request.platform != "tiktok"
+                    && !youtube_blocked
+                    && (page == 0 || cursors.contains_key(topic))
+                {
+                    self.phase(
+                        job,
+                        &format!("YouTube Shorts · {topic} · página {}", page + 1),
+                        None,
+                    );
+                    let fetched = if let Some((version, token)) = cursors.remove(topic) {
+                        youtube_next(&version, &token)
+                    } else {
+                        let mut url = Url::parse("https://www.youtube.com/results").unwrap();
+                        url.query_pairs_mut()
+                            .append_pair("search_query", topic)
+                            .append_pair("sp", "EgIQCQ%3D%3D")
+                            .append_pair("hl", "en");
+                        public_search(url, None).and_then(|html| youtube_results(&html))
+                    };
+                    match fetched {
+                        Ok(mut next) => {
+                            if let Some(cursor) = next.cursor {
+                                if used_cursors.insert(cursor.clone()) {
+                                    cursors.insert(topic.clone(), cursor);
+                                }
+                            }
+                            next.videos.sort_by(|a, b| b.views.cmp(&a.views));
+                            candidates.extend(next.videos.into_iter().map(|v| v.url));
+                        }
+                        Err(error) => result.warnings.push(format!(
+                            "YouTube: falha na busca de {topic}: {}",
+                            error.chars().take(180).collect::<String>()
+                        )),
+                    }
+                }
+                if request.platform != "youtube" && page < 4 {
+                    self.phase(
+                        job,
+                        &format!("TikTok · {topic} · busca {} de 4", page + 1),
+                        None,
+                    );
+                    let hashtag: String = topic
+                        .chars()
+                        .filter(|c| c.is_alphanumeric() || *c == '_')
+                        .flat_map(char::to_lowercase)
+                        .collect();
+                    // Bing's page offset repeats results; use four topic-preserving queries instead.
+                    let term = match page {
+                        0 => format!("{hashtag} tiktok"),
+                        1 => format!("{topic} clips tiktok"),
+                        2 => format!("\"{topic}\" tiktok"),
+                        _ => format!("{topic} shorts tiktok"),
+                    };
+                    let mut url = Url::parse("https://www.bing.com/videos/search").unwrap();
+                    url.query_pairs_mut()
+                        .append_pair("q", &term)
+                        .append_pair("count", "20");
+                    match public_search(url, None) {
+                        Ok(html) => candidates.extend(tiktok_links(&html)),
+                        Err(error) => result.warnings.push(format!(
+                            "TikTok: falha na busca de {topic}: {}",
+                            error.chars().take(180).collect::<String>()
+                        )),
+                    }
+                }
             }
-            if request.platform != "youtube" {
+            for url in candidates {
+                cancelled(ctl)?;
+                if result.videos.len() >= request.count || result.checked >= budget {
+                    break 'search;
+                }
+                if !seen.insert(url.clone()) {
+                    continue;
+                }
+                let youtube = clone_url(&url)?.1 == "YouTube";
+                if youtube && youtube_blocked {
+                    result.blocked += 1;
+                    continue;
+                }
+                result.checked += 1;
                 self.phase(
                     job,
-                    &format!("TikTok · procurando vídeos de {topic}…"),
+                    &format!(
+                        "{} de {} aprovados · verificando candidato {}",
+                        result.videos.len(),
+                        request.count,
+                        result.checked
+                    ),
                     None,
                 );
-                let search = (|| -> Result<Vec<String>> {
-                    for term in [format!("{hashtag} tiktok"), format!("{topic} clips tiktok")] {
-                        cancelled(ctl)?;
-                        let mut url = Url::parse("https://www.bing.com/videos/search").unwrap();
-                        url.query_pairs_mut()
-                            .append_pair("q", &term)
-                            .append_pair("count", "20");
-                        let body = public_html(url)?;
-                        let links = tiktok_links(&body);
-                        if !links.is_empty() {
-                            return Ok(links);
-                        }
-                    }
-                    Ok(Vec::new())
-                })();
-                match search {
-                    Ok(links) if !links.is_empty() => {
-                        for url in links.into_iter().take(candidates_per_topic) {
-                            if !candidates.contains(&url) { candidates.push(url); }
-                        }
-                    }
-                    Ok(_) => result.warnings.push(format!("TikTok: a busca pública não retornou vídeos para {topic}. Tente outro tema ou um link direto.")),
+                let checked = self.clone_metadata(&url, job, ctl).and_then(|info| {
+                    result.review(&url, &info, &topics, |matched| {
+                        self.verify_clone_content(&url, &info, matched, job, ctl)
+                    })
+                });
+                match checked {
+                    Ok(()) => {}
                     Err(error) if error == "Cancelled" => return Err(error),
-                    Err(error) => result.warnings.push(format!("TikTok: falha na busca pública de {topic}: {}", error.chars().take(240).collect::<String>())),
+                    Err(error) => {
+                        result.unavailable += 1;
+                        if youtube && media::youtube_session_error(&error) {
+                            youtube_blocked = true;
+                            cursors.clear();
+                            result.warnings.push(format!("{error} A verificação do YouTube foi interrompida nesta busca; o TikTok continua quando selecionado."));
+                        } else if !warned_failure {
+                            warned_failure = true;
+                            result.warnings.push(format!(
+                                "Falha ao verificar conteúdo: {}",
+                                error.chars().take(240).collect::<String>()
+                            ));
+                        }
+                    }
                 }
+                rank(&mut result.videos, request.min_views);
                 self.store_discovery(&result)?;
             }
-        }
-        let mut unavailable = 0;
-        for (index, url) in candidates.iter().enumerate() {
-            cancelled(ctl)?;
-            self.phase(
-                job,
-                &format!(
-                    "TikTok · verificando visualizações {}/{}",
-                    index + 1,
-                    candidates.len()
-                ),
-                Some(index as f64 / candidates.len() as f64),
-            );
-            match self.clone_metadata(url, job, ctl) {
-                Ok(info) => {
-                    if let Some(video) = video_from_info(&info, url, false) {
-                        metadata.insert(video.url.clone(), info.clone());
-                        pool.push(video);
-                    } else {
-                        unavailable += 1;
-                    }
-                }
-                Err(error) if error == "Cancelled" => return Err(error),
-                Err(_) => unavailable += 1,
+            if result.videos.len() >= request.count
+                || result.checked >= budget
+                || (cursors.is_empty() && (request.platform == "youtube" || page >= 3))
+            {
+                break;
             }
-            rank(&mut pool, request.min_views);
-            self.store_discovery(&result)?;
         }
-        if unavailable > 0 {
-            result.warnings.push(format!("TikTok: {unavailable} vídeos indisponíveis ou sem contagem de visualizações foram ignorados."));
-        }
-        let mut rejected = 0;
-        let mut failed = 0;
-        // shortcut: inspect at most 12 leading candidates, raise this bound if verified coverage needs grow.
-        for (index, candidate) in pool.iter().take(MAX_CANDIDATES).enumerate() {
-            cancelled(ctl)?;
-            self.phase(
-                job,
-                &format!(
-                    "Conferindo hashtags e conteúdo · {} de {}",
-                    index + 1,
-                    pool.len().min(MAX_CANDIDATES)
-                ),
-                None,
-            );
-            let checked = (|| -> Result<Option<CloneVideo>> {
-                let info = match metadata.remove(&candidate.url) {
-                    Some(info) => info,
-                    None => self.clone_metadata(&candidate.url, job, ctl)?,
-                };
-                let matched = matching_topics(&info, &topics);
-                if matched.is_empty() {
-                    return Ok(None);
-                }
-                let Some(mut video) = video_from_info(&info, &candidate.url, false) else {
-                    return Ok(None);
-                };
-                if video.views < request.min_views {
-                    return Ok(None);
-                }
-                video.verification =
-                    self.verify_clone_content(&candidate.url, &info, &matched, job, ctl)?;
-                Ok(video.verification.is_some().then_some(video))
-            })();
-            match checked {
-                Ok(Some(video)) => result.videos.push(video),
-                Ok(None) => rejected += 1,
-                Err(error) if error == "Cancelled" => return Err(error),
-                Err(error) => {
-                    failed += 1;
-                    if failed == 1 {
-                        result.warnings.push(format!(
-                            "Falha ao verificar conteúdo: {}",
-                            error.chars().take(240).collect::<String>()
-                        ));
-                    }
-                }
-            }
-            rank(&mut result.videos, request.min_views);
-            self.store_discovery(&result)?;
-        }
-        if rejected + failed > 0 {
-            result.warnings.push(format!("{} candidatos excluídos por falta de relação clara com os temas ou por verificação indisponível. Nenhum foi aprovado apenas pelas hashtags.", rejected + failed));
+        cancelled(ctl)?;
+        if result.videos.len() < request.count {
+            result.warnings.push(format!("{} de {} vídeos desejados encontrados. {} Os filtros de visualizações e conteúdo foram mantidos.", result.videos.len(), request.count, if result.checked >= budget || !cursors.is_empty() { "O limite de páginas ou candidatos desta busca foi atingido." } else { "As buscas disponíveis terminaram ou ficaram indisponíveis." }));
         }
         result.searched_at = now();
         self.store_discovery(&result)?;
         if result.videos.is_empty() {
-            return Err("Nenhum vídeo passou pela verificação de tema e conteúdo. Tente outro tema ou reduza o mínimo de visualizações. Veja os avisos do Clone.".into());
+            return Err("Nenhum vídeo foi aprovado. Confira os totais e os avisos do Clone antes de tentar novamente.".into());
         }
         Ok(result.videos)
     }
@@ -666,8 +761,8 @@ impl Engine {
         checked
     }
     pub fn clone_download(self: &Arc<Self>, urls: Vec<String>) -> Result<String> {
-        if urls.is_empty() || urls.len() > 10 {
-            return Err("Choose 1–10 videos to download.".into());
+        if urls.is_empty() || urls.len() > MAX_CLONE_VIDEOS {
+            return Err("Choose 1–10,000 videos to download.".into());
         }
         let discovery = self.discovery.lock().unwrap().clone();
         let mut videos = Vec::new();
@@ -809,7 +904,16 @@ mod tests {
             "https://www.youtube.com/results?search_query=GTA+6&sp=EgIQCQ%253D%253D&hl=en",
         )
         .unwrap();
-        let videos = youtube_results(&public_html(url).unwrap()).unwrap();
+        let first = youtube_results(&public_search(url, None).unwrap()).unwrap();
+        let (version, token) = first.cursor.expect("Shorts continuation missing");
+        let next = youtube_next(&version, &token).unwrap();
+        assert!(
+            next.videos
+                .iter()
+                .any(|v| !first.videos.iter().any(|old| old.url == v.url)),
+            "Next page returned no new Shorts"
+        );
+        let videos = first.videos;
         assert!(
             !videos.is_empty(),
             "YouTube Shorts page format changed or is unavailable"
@@ -862,14 +966,73 @@ mod tests {
             assert_eq!(compact_views(count), None);
         }
         let model = json!({"shortsLockupViewModel":{"onTap":{"innertubeCommand":{"reelWatchEndpoint":{"videoId":"abcdefghijk"}}},"overlayMetadata":{"primaryText":{"content":"GTA VI trailer"},"secondaryText":{"content":"1.2M views"}}}});
-        let videos = youtube_results(&format!(
-            "<script>var ytInitialData = {{\"items\":[{model}]}}; unrelated();</script>"
+        let page = youtube_results(&format!(
+            "<script>ytcfg.set({{\"INNERTUBE_CONTEXT\":{{\"client\":{{\"clientVersion\":\"test-version\"}}}}}}); var ytInitialData = {{\"items\":[{model},{{\"continuationItemRenderer\":{{\"continuationEndpoint\":{{\"continuationCommand\":{{\"token\":\"next-page\"}}}}}}}}]}}; unrelated();</script>"
         ))
         .unwrap();
+        assert_eq!(
+            page.cursor,
+            Some(("test-version".into(), "next-page".into()))
+        );
+        let videos = page.videos;
         assert_eq!(videos.len(), 1);
         assert_eq!(videos[0].views, 1_200_000);
         assert!(videos[0].verification.is_none());
         assert!(youtube_results("no initial data").is_err());
+    }
+    #[test]
+    fn clone_keeps_exact_minimum_and_continues_past_twelve_rejections() {
+        let mut request = CloneRequest {
+            query: "GTA 6".into(),
+            platform: "both".into(),
+            min_views: 100_000,
+            count: 10_000,
+            download: false,
+        };
+        assert!(request.validate().is_ok());
+        request.count = 10_001;
+        assert!(request.validate().is_err());
+        request.count = 0;
+        assert!(request.validate().is_err());
+        let mut result = Discovery {
+            min_views: 100_000,
+            ..Default::default()
+        };
+        let topics = vec!["GTA 6".into()];
+        for i in 0..15 {
+            let url = format!("https://www.youtube.com/shorts/{i:011}");
+            let info = json!({"title":"GTA VI trailer", "view_count":if i < 13 {99_999} else {100_000}, "duration":30});
+            result
+                .review(&url, &info, &topics, |_| {
+                    assert!(i >= 13, "Below-minimum videos must never reach AI");
+                    Ok(Some(Verification {
+                        topic: "GTA 6".into(),
+                        evidence: "Trailer".into(),
+                        confidence: 0.99,
+                    }))
+                })
+                .unwrap();
+        }
+        assert_eq!(result.below_minimum, 13);
+        assert_eq!(result.videos.len(), 2);
+        assert!(result
+            .videos
+            .iter()
+            .all(|v| v.views == 100_000 && !v.approximate_views));
+        result
+            .review(
+                "https://www.youtube.com/shorts/abcdefghijk",
+                &json!({"title":"Minecraft", "duration":30,"view_count":1_000_000}),
+                &topics,
+                |_| panic!("Unrelated metadata must skip AI"),
+            )
+            .unwrap();
+        assert_eq!(result.unrelated, 1);
+        let old: Discovery = serde_json::from_value(
+            json!({"query":"GTA 6","minViews":100000,"videos":[],"warnings":[],"searchedAt":1}),
+        )
+        .unwrap();
+        assert_eq!(old.requested_count, 0);
     }
     #[test]
     fn discovery_validates_links_filters_and_ranks_real_view_counts() {
