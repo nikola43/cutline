@@ -5,8 +5,8 @@ Host: Apple M1 Pro, macOS, native arm64 build.
 Passed:
 
 - TypeScript and Vite production build; Rust check and formatting.
-- Nine Rust unit tests covering URL/range validation, contiguous completed replay segments, GPU flags, caption escaping/timing, bounded speech candidates, and platform upload metadata validation.
-- Ten browser tests covering both AI modes, save failures, caption draft persistence across polling, editor/export commands, replay controls, all eleven screens at 320/768/1024/1440 px, one-click generation, stage/download percentages, cancellation, advanced input validation, and exactly-once folder-opening commands for packages/manual exports.
+- Ten Rust unit tests covering URL/range validation, contiguous completed replay segments, GPU flags, caption escaping/timing, bounded speech candidates, and platform upload metadata validation.
+- Eleven browser tests covering both AI modes, save failures, caption draft persistence across polling, editor/export commands, replay controls, all eleven screens at 320/768/1024/1440 px, one-click generation, stage/download percentages, cancellation, advanced input validation, and exactly-once folder-opening commands for packages/manual exports.
 - Actual FFmpeg import; original, square and vertical exports with burned captions; output dimensions and durations; multi-highlight export; cancellation; a deliberately unavailable GPU falling back to CPU.
 - Real-time local fixture recording: saved 30- and 60-second replays with checked durations, then stopped and saved the full recording. Apple VideoToolbox passed its hardware probe.
 - Real YouTube download/import using the previously supplied video URL; real Kick live capture from a currently live public channel, then stop/save.
@@ -55,3 +55,14 @@ Clone relevance update:
 
 - The complete live TikTok discovery → metadata/topic filtering → frame verification → original-download workflow passed in 269 seconds. Two candidates passed the visual check. The leading result reported 4.4 million views and retained 1080×1920, 7.9-second H.265 source quality (`bytevc1_1080p_2284499-1`).
 - The updated macOS release bundle built, passed strict signature verification, and replaced the Desktop app with the previous bundle retained as a local backup. Cutline relaunched successfully; existing app data and downloaded files were preserved.
+
+
+YouTube session update:
+
+- Added an opt-in browser session setting shared by YouTube lookups, imports, live resolution, Clone metadata checks, previews and original downloads. Existing preferences deserialize to public/no-session access; invalid browser values are rejected. TikTok, Kick, non-HTTPS and lookalike domains do not receive the browser-session argument.
+- Ten Rust unit tests and all eleven browser tests passed. The new UI check covers opt-in defaults, saved browser selection across navigation and visible save failures. Error checks cover sign-in renewal, Keychain/cookie failures and preservation of unrelated errors.
+- The exact reported video (`VzEQkOCy-EA`) loaded through the signed-in Chrome session. An initial playback check was still denied; after opening that video normally in Chrome, the real application backend passed metadata lookup, preview download, six-frame AI analysis and original download. The downloaded original measured 1080×1920 and 52.5 seconds. The content classifier rejected relevance, which is separate from authentication success.
+- Public metadata is explicitly projected instead of printing full yt-dlp information, which can include session cookies in format entries. Original export metadata was checked for absence of cookies, headers and formats. Browser sessions are not exported into files or passed to AI.
+- YouTube may still require the user to renew their browser login or complete a confirmation. Browser reopening was exercised, but native page inspection remains blocked by macOS Accessibility permission. No CAPTCHA solving, alternate-identity rotation or access-control bypass was used. The end-to-end check covered Chrome on this Mac; other browsers/platforms were not exercised.
+
+- The rebuilt macOS app passed strict signature verification, was installed on the Desktop and relaunched. The local YouTube browser setting was set to Chrome after the successful real-session test; other preferences and media were preserved.

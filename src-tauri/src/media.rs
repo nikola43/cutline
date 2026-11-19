@@ -7,6 +7,9 @@ use url::Url;
 
 pub type Result<T> = std::result::Result<T, String>;
 
+// Print only public metadata: full yt-dlp JSON can include per-format session cookies.
+pub const SOURCE_METADATA: &str = "%(.{id,title,description,tags,view_count,duration,is_live,live_status,thumbnail,thumbnails,uploader,channel})j";
+
 pub const DOWNLOAD_PROGRESS: &str = "download:cutline-download:%(info.vcodec|video)s\t%(progress.status)s\t%(progress.downloaded_bytes|0)s\t%(progress.total_bytes|0)s\t%(progress.total_bytes_estimate|0)s\t%(progress.fragment_index|0)s\t%(progress.fragment_count|0)s";
 
 pub fn download_progress(log: &str) -> Option<(String, Option<f64>)> {
@@ -254,6 +257,46 @@ impl Tools {
     }
 }
 
+pub fn validate_youtube_browser(browser: &str) -> Result<()> {
+    if ["none", "chrome", "firefox", "edge", "brave", "safari"].contains(&browser) {
+        Ok(())
+    } else {
+        Err("Escolha um navegador válido para a sessão do YouTube.".into())
+    }
+}
+pub fn is_youtube_url(raw: &str) -> bool {
+    source_url(raw).is_ok_and(|(_, provider)| provider == "YouTube")
+}
+pub fn youtube_session(cmd: &mut Command, url: &str, browser: &str) -> Result<()> {
+    validate_youtube_browser(browser)?;
+    if browser != "none" && is_youtube_url(url) {
+        // Read the selected browser session in yt-dlp; never export it with --cookies.
+        cmd.args(["--cookies-from-browser", browser]);
+    }
+    Ok(())
+}
+pub fn youtube_error(error: &str, browser_session: bool) -> String {
+    let lower = error.to_lowercase();
+    if lower.contains("sign in to confirm")
+        || lower.contains("sign in to verify")
+        || lower.contains("login required")
+        || lower.contains("cookies are no longer valid")
+        || lower.contains("cookies have expired")
+    {
+        return if browser_session {
+            "YouTube: a sessão precisa ser renovada. Abra o vídeo no navegador escolhido em Configurações → YouTube, entre na conta e conclua a confirmação solicitada. Depois tente novamente.".into()
+        } else {
+            "YouTube: entre na conta no navegador e selecione essa sessão em Configurações → YouTube. Depois tente novamente.".into()
+        };
+    }
+    if browser_session
+        && (lower.contains("cookie") || lower.contains("keychain") || lower.contains("keyring"))
+    {
+        return "Não foi possível ler a sessão do navegador. Confirme o navegador em Configurações → YouTube. No macOS, autorize o acesso ao Chaves quando solicitado; se o banco de cookies estiver em uso, feche o navegador e tente novamente.".into();
+    }
+    error.into()
+}
+
 pub fn source_url(raw: &str) -> Result<(String, String)> {
     let u = Url::parse(raw.trim())
         .map_err(|_| "Paste a complete YouTube or Kick URL, starting with https://".to_string())?;
@@ -401,6 +444,64 @@ pub fn recent_segments(all: &[Segment], seconds: f64) -> Result<(Vec<Segment>, f
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn youtube_session_is_opt_in_scoped_and_has_actionable_errors() {
+        for url in [
+            "https://www.youtube.com/shorts/VzEQkOCy-EA",
+            "https://youtu.be/VzEQkOCy-EA",
+            "https://m.youtube.com/live/VzEQkOCy-EA",
+        ] {
+            let mut cmd = Command::new("yt-dlp");
+            youtube_session(&mut cmd, url, "chrome").unwrap();
+            assert_eq!(
+                cmd.get_args().collect::<Vec<_>>(),
+                vec!["--cookies-from-browser", "chrome"]
+            );
+        }
+        for (url, browser) in [
+            ("https://www.youtube.com/shorts/VzEQkOCy-EA", "none"),
+            (
+                "https://www.tiktok.com/@name/video/1234567890123456789",
+                "chrome",
+            ),
+            ("https://kick.com/channel", "chrome"),
+            ("https://youtube.com.evil.test/watch?v=secret", "chrome"),
+            ("http://www.youtube.com/watch?v=secret", "chrome"),
+            ("https://user@www.youtube.com/watch?v=secret", "chrome"),
+        ] {
+            let mut cmd = Command::new("yt-dlp");
+            youtube_session(&mut cmd, url, browser).unwrap();
+            assert_eq!(cmd.get_args().count(), 0);
+        }
+        for browser in [
+            "chrome:/tmp/profile",
+            "--cookies",
+            "chrome;command",
+            "unknown",
+        ] {
+            assert!(youtube_session(
+                &mut Command::new("yt-dlp"),
+                "https://youtu.be/VzEQkOCy-EA",
+                browser
+            )
+            .is_err());
+        }
+        let old: crate::engine::Preferences =
+            serde_json::from_str(r#"{"aiMode":"codex"}"#).unwrap();
+        assert_eq!(old.youtube_browser, "none");
+        assert!(
+            youtube_error("ERROR: Sign in to confirm you’re not a bot", false)
+                .contains("Configurações → YouTube")
+        );
+        assert!(
+            youtube_error("ERROR: Sign in to confirm you’re not a bot", true).contains("renovada")
+        );
+        assert!(youtube_error("Could not decrypt cookies with Keychain", true).contains("Chaves"));
+        assert_eq!(
+            youtube_error("Video unavailable", true),
+            "Video unavailable"
+        );
+    }
     #[test]
     fn download_progress_handles_tracks_estimates_unknown_sizes_and_partial_lines() {
         let parse = |data: &str| download_progress(&format!("cutline-download:{data}"));

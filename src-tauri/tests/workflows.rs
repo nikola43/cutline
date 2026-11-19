@@ -840,3 +840,65 @@ printf 'cutline-file:"%s"\n' "$output"
     );
     assert!(!work.join("clone-preview").exists());
 }
+
+#[test]
+#[ignore = "uses the signed-in Chrome YouTube session and downloads the reported failing video"]
+fn youtube_browser_session_loads_previews_and_downloads_reported_video() {
+    let rig = Rig::new();
+    let e = &rig.engine;
+    let mut preferences = e.preferences.lock().unwrap().clone();
+    preferences.youtube_browser = "chrome".into();
+    preferences.ai_mode = "codex".into();
+    e.save_preferences(preferences).unwrap();
+    let url = "https://www.youtube.com/shorts/VzEQkOCy-EA";
+    let info = e
+        .inspect(url)
+        .expect("Signed-in YouTube metadata lookup should succeed");
+    assert_eq!(info.id, "VzEQkOCy-EA");
+    assert!(info.duration.unwrap() > 0.);
+    let job = "youtube-session-preview";
+    let work = e.root.join("work").join(job);
+    std::fs::create_dir(&work).unwrap();
+    let metadata = serde_json::json!({"title":info.title,"duration":info.duration});
+    let verdict = e
+        .verify_clone_content(
+            url,
+            &metadata,
+            &["GTA 6".into()],
+            job,
+            &AtomicBool::new(false),
+        )
+        .expect(
+            "Authenticated preview must reach visual verification; relevance may still be rejected",
+        );
+    assert!(!work.join("clone-preview").exists());
+    assert!(
+        std::fs::read_dir(&work)
+            .unwrap()
+            .flatten()
+            .any(|f| f.file_name().to_string_lossy().starts_with("answer-")),
+        "Actual visual verification should run"
+    );
+    println!(
+        "Authenticated metadata and preview passed; visual match: {}",
+        verdict.is_some()
+    );
+    let id = e.clone_download(vec![url.into()]).unwrap();
+    complete(e, &id, 300);
+    let folder = e.job_output_dir(&id).unwrap();
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(folder.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["status"], "completed");
+    let file = folder.join(manifest["videos"][0]["file"].as_str().unwrap());
+    let (duration, width, height) = e.probe(&file).unwrap();
+    assert!((duration - info.duration.unwrap()).abs() < 1.);
+    assert!(width > 0 && height > 0);
+    let stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(folder.join("01/metadata.json")).unwrap()).unwrap();
+    assert!(
+        stored.get("cookies").is_none()
+            && stored.get("formats").is_none()
+            && stored.get("http_headers").is_none()
+    );
+    println!("Reported YouTube video downloaded: {width}x{height}, {duration:.1}s; no session data in export metadata");
+}

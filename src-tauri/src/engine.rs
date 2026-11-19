@@ -49,6 +49,7 @@ pub struct Preferences {
     pub encoder: String,
     pub ai_mode: String,
     pub local_model: String,
+    pub youtube_browser: String,
     pub captions: crate::ai::CaptionStyle,
 }
 impl Default for Preferences {
@@ -57,6 +58,7 @@ impl Default for Preferences {
             encoder: "auto".into(),
             ai_mode: "local".into(),
             local_model: "gemma3:1b".into(),
+            youtube_browser: "none".into(),
             captions: Default::default(),
         }
     }
@@ -232,6 +234,7 @@ impl Engine {
             .unwrap_or_else(Encoder::cpu)
     }
     pub fn save_preferences(&self, p: Preferences) -> Result<()> {
+        media::validate_youtube_browser(&p.youtube_browser)?;
         if p.encoder != "auto"
             && !self
                 .encoders
@@ -381,6 +384,15 @@ impl Engine {
         job: Option<(&str, Option<f64>)>,
         stdin: Option<&str>,
     ) -> Result<String> {
+        let youtube = self
+            .tools
+            .ytdlp
+            .as_deref()
+            .is_some_and(|p| cmd.get_program() == p.as_os_str())
+            && cmd
+                .get_args()
+                .any(|a| media::is_youtube_url(&a.to_string_lossy()));
+        let browser_session = cmd.get_args().any(|a| a == "--cookies-from-browser");
         let downloading = cmd.get_args().any(|a| a == media::DOWNLOAD_PROGRESS);
         let tag = uid();
         let logs = self.root.join("work");
@@ -488,7 +500,11 @@ impl Engine {
             return Err(if error.trim().is_empty() {
                 format!("Media tool exited with {status}")
             } else {
-                error.trim().into()
+                if youtube {
+                    media::youtube_error(error.trim(), browser_session)
+                } else {
+                    error.trim().into()
+                }
             });
         }
         Ok(stdout)
@@ -497,11 +513,18 @@ impl Engine {
         self.run(cmd, ctl, Duration::from_secs(900), Some((id, None)), None)
             .map(|_| ())
     }
+    pub fn ytdlp(&self, url: &str) -> Result<Command> {
+        let mut cmd = self.tools.ytdlp()?;
+        let browser = self.preferences.lock().unwrap().youtube_browser.clone();
+        media::youtube_session(&mut cmd, url, &browser)?;
+        Ok(cmd)
+    }
     pub fn inspect(&self, url: &str) -> Result<SourceInfo> {
         let (url, provider) = media::source_url(url)?;
-        let mut c = self.tools.ytdlp()?;
+        let mut c = self.ytdlp(&url)?;
         c.args([
-            "--dump-single-json",
+            "--print",
+            media::SOURCE_METADATA,
             "--skip-download",
             "--no-check-formats",
             "--",
@@ -711,7 +734,7 @@ impl Engine {
             return Err("This is live now. Use the live recording tab instead.".into());
         }
         let work = self.root.join("work").join(id);
-        let mut cmd = self.tools.ytdlp()?;
+        let mut cmd = self.ytdlp(&url)?;
         cmd.args([
             "-f",
             "bv*[vcodec^=avc1][height<=1080]+ba[acodec^=mp4a]/b[height<=1080]/best[height<=1080]",
@@ -871,9 +894,10 @@ impl Engine {
                     "This link is not live right now. Import it as a video instead.".into(),
                 );
             }
-            let mut cmd = e.tools.ytdlp()?;
+            let mut cmd = e.ytdlp(&url)?;
             cmd.args([
-                "--dump-single-json",
+                "--print",
+                "%(.{url,http_headers})j",
                 "--skip-download",
                 "-f",
                 "b[height<=1080][vcodec^=avc1]/b[height<=1080]/b",

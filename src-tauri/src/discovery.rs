@@ -554,10 +554,11 @@ impl Engine {
         Ok(result.videos)
     }
     fn clone_metadata(&self, url: &str, job: &str, ctl: &AtomicBool) -> Result<Value> {
-        let mut cmd = self.tools.ytdlp()?;
+        let mut cmd = self.ytdlp(&url)?;
         cmd.args([
             "--skip-download",
-            "--dump-single-json",
+            "--print",
+            media::SOURCE_METADATA,
             "--extractor-retries",
             "0",
             "--retries",
@@ -593,7 +594,7 @@ impl Engine {
         fs::create_dir(&dir).map_err(err)?;
         let checked = (|| -> Result<Option<Verification>> {
             self.phase(job, "Baixando prévia para conferir o conteúdo…", Some(0.));
-            let mut cmd = self.tools.ytdlp()?;
+            let mut cmd = self.ytdlp(&url)?;
             cmd.args([
                 "--no-simulate",
                 "-f",
@@ -756,7 +757,7 @@ impl Engine {
     ) -> Result<PathBuf> {
         let (url, _) = clone_url(raw)?;
         cancelled(ctl)?;
-        let mut cmd = self.tools.ytdlp()?;
+        let mut cmd = self.ytdlp(&url)?;
         cmd.args(["--no-simulate", "--no-overwrites", "-f", QUALITY, "--format-sort-force", "-S", "res,fps,br", "--merge-output-format", "mkv", "--newline", "--progress", "--progress-delta", "0.25", "--progress-template", media::DOWNLOAD_PROGRESS, "--progress-template", "postprocess:cutline-postprocess", "--print", "after_move:cutline-file:%(filepath)j", "--print-to-file", "after_move:%(.{id,title,description,tags,uploader,view_count,duration,width,height,ext,format_id,vcodec,acodec,fps,webpage_url})j"])
             .arg(folder.join("metadata.json")).arg("-o").arg(folder.join("video.%(ext)s")).args(["--", &url]);
         self.phase(

@@ -193,3 +193,18 @@ test('Clone topics stay editable during work and persist across navigation and r
   await page.evaluate(()=>{(window as any).testState.jobs[0].status='completed'});
   await input.fill('a,b,c,d');await expect(page.getByRole('button',{name:'Buscar e baixar',exact:true})).toBeDisabled();
 });
+
+test('YouTube browser session is opt-in, persists, and reports failed saves',async({page})=>{
+  await desktop(page);await page.getByRole('button',{name:'Configurações',exact:true}).click();
+  const session=page.getByRole('combobox',{name:'Sessão do navegador'});
+  await expect(session).toHaveValue('none');
+  await session.selectOption('chrome');
+  await expect.poll(()=>page.evaluate(()=>(window as any).testState.preferences.youtubeBrowser)).toBe('chrome');
+  await page.getByRole('button',{name:'Clone',exact:true}).click();
+  await page.getByRole('button',{name:'Configurações',exact:true}).click();
+  await expect(session).toHaveValue('chrome');
+  await page.evaluate(()=>{(window as any).testFailSave=true});
+  await session.selectOption('firefox');
+  await expect(page.getByRole('alert')).toContainText('Save failed');
+  await expect(session).toHaveValue('chrome');
+});
