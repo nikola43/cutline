@@ -173,9 +173,9 @@ test('Clone search-only never opens a folder; invalid input and source failures 
   const calls=await page.evaluate(()=>(window as any).testCalls);
   expect(calls).toContainEqual({command:'clone_search',args:{request:{query:'GTA 6',platform:'tiktok',minViews:100000,count:2,download:false}}});
   expect(calls.some((c:any)=>c.command==='reveal_job_output')).toBe(false);
-  await page.evaluate(()=>{const s=(window as any).testState;s.discovery.warnings=['TikTok: um vídeo ficou indisponível.'];s.jobs[0].status='failed';s.jobs[0].message='Nenhum vídeo encontrado';});
+  await page.evaluate(()=>{const s=(window as any).testState;s.discovery.warnings=['TikTok: um vídeo ficou indisponível.'];s.jobs[0].status='failed';s.jobs[0].message='Busca incompleta: 2 de 5 vídeos aprovados';});
   await expect(page.getByText('TikTok: um vídeo ficou indisponível.')).toBeVisible();
-  await expect(page.locator('.clone-progress')).toContainText('Nenhum vídeo encontrado');
+  await expect(page.locator('.clone-progress')).toContainText('Busca incompleta: 2 de 5 vídeos aprovados');
   await expect(page.getByRole('button',{name:'Buscar e baixar',exact:true})).toBeEnabled();
 });
 

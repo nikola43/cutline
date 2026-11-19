@@ -633,9 +633,13 @@ fn clone_discovers_and_downloads_both_platforms() {
             query: "GTA 6".into(),
             platform: platform.into(),
             min_views: 100000,
-            count: 1,
+            count: std::env::var("CUTLINE_TEST_CLONE_COUNT")
+                .ok()
+                .map(|n| n.parse().unwrap())
+                .unwrap_or(1),
             download: false,
         };
+        let requested_count = request.count;
         let searched = wait(e, &e.clone_search(request).unwrap(), 1800);
         assert_eq!(
             searched.status,
@@ -645,6 +649,7 @@ fn clone_discovers_and_downloads_both_platforms() {
             e.snapshot().discovery.warnings
         );
         let result = e.snapshot().discovery;
+        assert_eq!(result.videos.len(), requested_count);
         assert!(
             !result.videos.is_empty(),
             "No results for {platform}: {:?}",
