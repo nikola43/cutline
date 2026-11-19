@@ -30,13 +30,15 @@ test('TikTok adapter refuses account changes and preserves an uncertain post',as
     <button onclick="window.postClicked=true">Post</button>
   `}));
   await page.goto('https://www.tiktok.com/tiktokstudio/upload');
-  const request={platform:'tiktok',expectedAccount:'different',privacy:'private',file:{name:'clip.mp4',mimeType:'video/mp4',buffer:Buffer.from('fixture')},title:'Title',description:'Caption'};
+  const request={platform:'tiktok',expectedAccount:'different',privacy:'private',file:{name:'clip.mp4',mimeType:'video/mp4',buffer:Buffer.from('fixture')},title:'Title',description:'Your video has been uploaded'};
   const states:any[]=[];
   await expect(upload(page,request,async value=>{states.push(value)})).rejects.toThrow('conta');
   expect(states).toHaveLength(0);
   const posting=upload(page,{...request,expectedAccount:'creator'},async value=>{states.push(value)});
   const checked=expect(posting).rejects.toThrow();
   await expect.poll(()=>page.evaluate(()=>(window as any).postClicked)).toBe(true);
+  await page.waitForTimeout(1200);
+  expect(states.map(s=>s.status)).toEqual(['uploading','posting']);
   await page.close();
   await checked;
   expect(states.map(s=>s.status)).toEqual(['uploading','posting']);
@@ -49,7 +51,7 @@ test('TikTok adapter confirms an upload only after the success screen',async({pa
     <button role="combobox">Everyone</button>
     <span onclick="document.querySelector('[role=combobox]').textContent=this.textContent">Only you</span>
     <button onclick="document.getElementById('success').hidden=false">Post</button>
-    <div id="success" hidden><p>Your video has been uploaded</p><a href="https://www.tiktok.com/@creator/video/1234567890123456789">Caption</a></div>
+    <div id="success" role="status" hidden><p>Your video has been uploaded</p><a href="https://www.tiktok.com/@creator/video/1234567890123456789">Caption</a></div>
   `}));
   await page.goto('https://www.tiktok.com/tiktokstudio/upload');
   const states:any[]=[];

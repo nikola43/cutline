@@ -29,7 +29,7 @@ export async function ready(page, platform, interactive=false) {
   const until=Date.now()+(interactive?10*60_000:30_000);
   do {
     if(platform==='tiktok') {
-      const ownProfile=page.locator('a[data-e2e="nav-profile"], [data-e2e="nav-profile"] a').or(page.getByRole('link',{name:/^(Profile|Perfil)$/})).first();
+      const ownProfile=page.locator('a[data-e2e="nav-profile"], [data-e2e="nav-profile"] a, [data-e2e="profile-icon"] a').first();
       const href=await ownProfile.getAttribute('href',{timeout:1000}).catch(()=>null);
       const url=href?new URL(href,'https://www.tiktok.com'):null;
       const id=url?.hostname==='www.tiktok.com'?url.pathname.match(/^\/@([\w.-]+)\/?$/)?.[1]:null;
@@ -101,7 +101,7 @@ export async function upload(page, request, save) {
   await save({status:'posting',url:null});
   await clickVisible(page.getByRole('button',{name:/^(Post|Publicar|Postar)$/}).first());
   // Studio may show a success notice or redirect to the new content row.
-  const success=page.getByText(/^(Your video has been uploaded|Your video has been posted|Video uploaded|Vídeo enviado|Vídeo publicado|Seu vídeo foi publicado)/i).first();
+  const success=page.locator('[role="status"], [role="alert"], [data-e2e="upload-success"]').filter({hasText:/^(Your video has been uploaded|Your video has been posted|Video uploaded|Vídeo enviado|Vídeo publicado|Seu vídeo foi publicado)/i}).first();
   const confirm=page.getByRole('dialog').getByRole('button',{name:/^(Post now|Post|Publicar agora|Publicar)$/});
   const deadline=Date.now()+300_000;
   let confirmed=false;
