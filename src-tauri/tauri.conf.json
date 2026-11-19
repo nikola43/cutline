@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Cutline",
+  "version": "0.1.0",
+  "identifier": "com.submundovi.cutline",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Cutline \u2014 Clip studio",
+        "width": 1380,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 680,
+        "backgroundColor": "#101213"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https: data:; media-src 'self' asset: http://asset.localhost blob:; connect-src ipc: http://ipc.localhost; frame-src https://www.youtube-nocookie.com https://player.kick.com; object-src 'none'; base-uri 'self'; form-action 'none'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/**"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "resources": {
+      "../.tools/bundled/": "tools/"
+    },
+    "icon": [
+      "icons/icon.icns",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/32x32.png"
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    }
+  }
+}
