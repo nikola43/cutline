@@ -459,6 +459,9 @@ impl Engine {
     }
     pub fn clone_search(self: &Arc<Self>, request: CloneRequest) -> Result<String> {
         request.validate()?;
+        if request.download {
+            self.validate_auto_upload()?;
+        }
         let kind = if request.download {
             "clone_download"
         } else {
@@ -761,6 +764,7 @@ impl Engine {
         checked
     }
     pub fn clone_download(self: &Arc<Self>, urls: Vec<String>) -> Result<String> {
+        self.validate_auto_upload()?;
         if urls.is_empty() || urls.len() > MAX_CLONE_VIDEOS {
             return Err("Choose 1–10,000 videos to download.".into());
         }
@@ -794,6 +798,7 @@ impl Engine {
         )
     }
     fn clone_batch(&self, videos: &[CloneVideo], job: &str, ctl: &AtomicBool) -> Result<()> {
+        let accounts = self.prepare_auto_upload(job, ctl)?;
         let relative = format!("exports/clone-{job}");
         let folder = self.root.join(&relative);
         fs::create_dir(&folder).map_err(err)?;
@@ -814,6 +819,8 @@ impl Engine {
                 match self.download_original(&video.url, &dir, job, ctl) {
                     Ok(file) => {
                         manifest["videos"].as_array_mut().unwrap().push(json!({"source":video.url,"file":format!("{:02}/{}",index+1,file.file_name().unwrap().to_string_lossy()), "metadata":format!("{:02}/metadata.json",index+1),"verification":video.verification}));
+                        self.atomic_json(&manifest_path, &manifest)?;
+                        self.upload_clone_file(&video.url, &file, &accounts, job, ctl)?;
                     }
                     Err(error) if error == "Cancelled" => return Err(error),
                     Err(error) => {
@@ -835,6 +842,10 @@ impl Engine {
             Err(e) if e == "Cancelled" => "cancelled",
             Err(_) => "failed",
         });
+        manifest["automaticUpload"] = json!(!accounts.is_empty());
+        if let Err(error) = &result {
+            manifest["error"] = json!(error);
+        }
         self.atomic_json(&manifest_path, &manifest)?;
         if result.is_ok() {
             if let Some(j) = self.jobs.lock().unwrap().iter_mut().find(|j| j.id == job) {

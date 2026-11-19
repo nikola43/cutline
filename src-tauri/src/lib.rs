@@ -4,11 +4,29 @@ pub mod engine;
 pub mod hardware;
 pub mod media;
 pub mod package;
+pub mod uploads;
 use engine::{Engine, Preferences, Snapshot};
 use media::{Result, SourceInfo};
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
+
+#[tauri::command]
+fn open_upload_login(engine: State<Arc<Engine>>, platform: String) -> Result<String> {
+    engine.inner().open_upload_browser(platform, false)
+}
+#[tauri::command]
+fn connect_upload_account(engine: State<Arc<Engine>>, platform: String) -> Result<String> {
+    engine.inner().connect_upload_account(platform)
+}
+#[tauri::command]
+fn confirm_upload(engine: State<Arc<Engine>>, id: String, uploaded: bool) -> Result<()> {
+    engine.confirm_upload(&id, uploaded)
+}
+#[tauri::command]
+fn open_upload_studio(engine: State<Arc<Engine>>, platform: String) -> Result<String> {
+    engine.inner().open_upload_browser(platform, true)
+}
 
 #[tauri::command]
 fn clone_search(engine: State<Arc<Engine>>, request: discovery::CloneRequest) -> Result<String> {
@@ -194,6 +212,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
+            connect_upload_account,
+            open_upload_login,
+            confirm_upload,
+            open_upload_studio,
             clone_search,
             clone_download,
             open_clone_source,

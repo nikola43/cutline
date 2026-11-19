@@ -50,6 +50,8 @@ pub struct Preferences {
     pub ai_mode: String,
     pub local_model: String,
     pub youtube_browser: String,
+    pub auto_upload: bool,
+    pub upload_privacy: String,
     pub captions: crate::ai::CaptionStyle,
 }
 impl Default for Preferences {
@@ -59,6 +61,8 @@ impl Default for Preferences {
             ai_mode: "local".into(),
             local_model: "gemma3:1b".into(),
             youtube_browser: "none".into(),
+            auto_upload: false,
+            upload_privacy: "private".into(),
             captions: Default::default(),
         }
     }
@@ -92,6 +96,7 @@ pub struct LiveSession {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    pub uploads: crate::uploads::UploadState,
     pub discovery: crate::discovery::Discovery,
     pub library: Vec<Media>,
     pub jobs: Vec<Job>,
@@ -104,6 +109,8 @@ pub struct Snapshot {
 }
 
 pub struct Engine {
+    pub uploads: Mutex<crate::uploads::UploadState>,
+    pub upload_runner: PathBuf,
     pub root: PathBuf,
     pub tools: Tools,
     pub encoders: Vec<Encoder>,
@@ -185,8 +192,17 @@ impl Engine {
             discovery.warnings = vec!["Resultados antigos sem análise de conteúdo foram ocultados. Faça uma nova busca para verificar os vídeos.".into()];
         }
         let tools = Tools::discover(resources);
+        let uploads = crate::uploads::UploadState::load(&root)?;
+        let bundled = resources.join("uploader/runner.mjs");
+        let upload_runner = if bundled.is_file() {
+            bundled
+        } else {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../uploader/runner.mjs")
+        };
         let encoders = hardware::detect(tools.ffmpeg.as_deref());
         Ok(Arc::new(Self {
+            uploads: Mutex::new(uploads),
+            upload_runner,
             root,
             tools,
             encoders,
@@ -214,6 +230,7 @@ impl Engine {
         let preferences = self.preferences.lock().unwrap().clone();
         let active_encoder = self.encoder().label;
         Snapshot {
+            uploads: self.uploads.lock().unwrap().snapshot(),
             discovery: self.discovery.lock().unwrap().clone(),
             library,
             jobs,
@@ -234,6 +251,14 @@ impl Engine {
             .unwrap_or_else(Encoder::cpu)
     }
     pub fn save_preferences(&self, p: Preferences) -> Result<()> {
+        if !["private", "public"].contains(&p.upload_privacy.as_str()) {
+            return Err("Escolha visibilidade privada ou pública para os uploads.".into());
+        }
+        if p.auto_upload && self.uploads.lock().unwrap().accounts.len() != 2 {
+            return Err(
+                "Conecte TikTok e YouTube em Configurações antes de ativar uploads.".into(),
+            );
+        }
         media::validate_youtube_browser(&p.youtube_browser)?;
         if p.encoder != "auto"
             && !self

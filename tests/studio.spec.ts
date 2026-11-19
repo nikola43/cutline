@@ -20,6 +20,7 @@ async function desktop(page:Page){
         state.jobs=[{id:'clone-job',kind:args.request.download?'clone_download':'clone_search',label:'Clone',status:'completed',message:'Concluído',progress:1,outputId:null,outputDir:args.request.download?'/exports/clone-1':null,createdAt:1700000002}];return 'clone-job';
       }
       if(command==='clone_download'){state.jobs=[{id:'clone-download-2',kind:'clone_download',label:'Clone · vídeos salvos',status:'completed',message:'Concluído',progress:1,outputId:null,outputDir:'/exports/clone-2',createdAt:1700000003}];return 'clone-download-2';}
+      if(command==='confirm_upload'){const r=state.uploads.records.find(r=>r.id===args.id);if(r)r.status=args.uploaded?'confirmed':'failed';return;}
       if(command==='get_ai_status')return {whisperReady:true,modelReady:true,localModels:['gemma3:1b'],codexInstalled:true,codexLoggedIn:true,codexStatus:'Connected'};
       if(command==='get_transcript')return [{start:1,end:2,text:'Teste'},{start:2,end:3,text:'legenda'}];
       if(command==='get_highlights')return [{id:'1',start:10,end:40,title:'Primeiro momento',reason:'Ideia completa',score:91},{id:'2',start:50,end:80,title:'Segundo momento',reason:'Surpresa',score:87}];
@@ -243,4 +244,42 @@ test('Clone paginates 10,000 results and can select the whole batch',async({page
   expect(urls).toHaveLength(10000);
   expect(urls[0]).toBe('https://www.youtube.com/shorts/00000000000');
   expect(urls[9999]).toBe('https://www.youtube.com/shorts/00000009999');
+});
+
+
+test('automatic upload is off by default, needs both accounts, and persists only successful saves',async({page})=>{
+  await desktop(page);await page.getByRole('button',{name:'Clone',exact:true}).click();
+  const toggle=page.getByRole('switch',{name:'Upload automático'});
+  await expect(toggle).not.toBeChecked();await expect(toggle).toBeDisabled();
+  await page.getByRole('button',{name:'Conectar contas',exact:true}).click();
+  await page.getByRole('button',{name:'Abrir login TikTok',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).testCalls)).toContainEqual({command:'open_upload_login',args:{platform:'tiktok'}});
+  await page.getByRole('button',{name:'Verificar conexão YouTube',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).testCalls)).toContainEqual({command:'connect_upload_account',args:{platform:'youtube'}});
+  await page.evaluate(()=>{(window as any).testState.uploads.accounts=[{platform:'tiktok',id:'creator',label:'@creator'},{platform:'youtube',id:'UCtest',label:'Test channel'}]});
+  await page.getByRole('combobox',{name:'Visibilidade dos uploads'}).selectOption('public');
+  await page.getByRole('button',{name:'Clone',exact:true}).click();
+  await expect(toggle).toBeEnabled();await toggle.check();
+  await expect(page.getByRole('button',{name:'Buscar, baixar e enviar',exact:true})).toBeEnabled();
+  await page.getByRole('button',{name:'Dashboard',exact:true}).click();await page.getByRole('button',{name:'Clone',exact:true}).click();
+  await expect(toggle).toBeChecked();await expect(page.getByText('Ativado · publicação pública após cada download')).toBeVisible();
+  await page.getByRole('button',{name:'Somente buscar',exact:true}).click();
+  const request=await page.evaluate(()=>(window as any).testCalls.find((c:any)=>c.command==='clone_search').args.request);
+  expect(request.download).toBe(false);
+  await page.evaluate(()=>(window as any).testFailSave=true);
+  await toggle.click();await expect(page.getByRole('alert')).toContainText('Save failed');await expect(toggle).toBeChecked();
+  await page.evaluate(()=>{(window as any).testFailSave=false;(window as any).testState.jobs[0].status='running'});await expect(toggle).toBeEnabled();await toggle.uncheck();await expect(toggle).not.toBeChecked();
+});
+
+
+test('uncertain uploads require explicit reconciliation before retry',async({page})=>{
+  await desktop(page);
+  await page.evaluate(()=>{const s=(window as any).testState;s.preferences.autoUpload=true;s.uploads={accounts:[{platform:'tiktok',id:'creator',label:'@creator'},{platform:'youtube',id:'UCtest',label:'Channel'}],records:[{id:'upload-1',sourceUrl:'https://www.youtube.com/shorts/abcdefghijk',platform:'youtube',account:'Channel',title:'Interrupted video',status:'uncertain',url:null,message:'Check Studio',updatedAt:1}]}});
+  await page.getByRole('button',{name:'Clone',exact:true}).click();
+  await expect(page.getByText('Confira na plataforma',{exact:false})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Repetir download e envio'})).toHaveCount(0);
+  await page.getByRole('button',{name:'Não foi enviado — permitir tentativa'}).click();
+  expect(await page.evaluate(()=>(window as any).testCalls)).toContainEqual({command:'confirm_upload',args:{id:'upload-1',uploaded:false}});
+  await page.getByRole('button',{name:'Repetir download e envio'}).click();
+  expect(await page.evaluate(()=>(window as any).testCalls)).toContainEqual({command:'clone_download',args:{urls:['https://www.youtube.com/shorts/abcdefghijk']}});
 });

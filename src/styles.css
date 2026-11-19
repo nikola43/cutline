@@ -20,3 +20,7 @@
 .clone-search-summary{padding:18px;margin-bottom:18px}.clone-search-summary .help-text{margin-top:8px}
 
 .clone-pages{flex-wrap:wrap;margin-bottom:18px}
+
+.clone-upload-toggle{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:20px 0;padding:15px;border:1px solid var(--border);border-radius:8px;background:#ffe50005}.clone-upload-toggle>label{display:flex;align-items:center;gap:12px}.clone-upload-toggle input{margin:0;flex-shrink:0}.clone-upload-toggle b{float:none;display:block}.clone-upload-toggle small{display:block;margin-top:3px}.upload-accounts{display:grid;gap:14px;margin:18px 0}.upload-accounts>div,.upload-record{display:flex;align-items:center;justify-content:space-between;gap:16px}.upload-history{padding:18px;margin:20px 0}.upload-record{padding:14px 0;border-bottom:1px solid var(--border)}.upload-record:last-child{border:0}.upload-record>div{min-width:0}.upload-record b,.upload-record small{overflow-wrap:anywhere}.upload-record .button-row{flex-wrap:wrap;flex-shrink:0}.upload-record p{font-size:12px;margin:4px 0}@media(max-width:700px){.clone-upload-toggle,.upload-record,.upload-accounts>div{align-items:flex-start;flex-direction:column}.upload-record .button-row{flex-shrink:1}}
+
+.upload-accounts .button-row{flex-wrap:wrap}

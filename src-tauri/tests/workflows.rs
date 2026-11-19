@@ -902,3 +902,86 @@ fn youtube_browser_session_loads_previews_and_downloads_reported_video() {
     );
     println!("Reported YouTube video downloaded: {width}x{height}, {duration:.1}s; no session data in export metadata");
 }
+
+#[test]
+#[ignore = "requires local FFmpeg and Node; browser responses are controlled fixtures"]
+fn automatic_uploads_preserve_originals_and_do_not_repeat_uncertain_posts() {
+    use cutline_lib::uploads::UploadAccount;
+    let mut rig = Rig::new();
+    let fixture = rig.fixture();
+    let stub = rig.engine.root.join("upload-stub.mjs");
+    std::fs::write(&stub,r#"
+import fs from 'node:fs';
+let input='';for await(const part of process.stdin)input+=part;
+const r=JSON.parse(input);
+fs.appendFileSync(r.exports+'/calls.txt',r.action+':'+r.platform+'\n');
+if(r.action==='check'){process.stdout.write(JSON.stringify({account:{id:r.expectedAccount}}));}
+else if(r.platform==='youtube'){fs.writeFileSync(r.receipt,JSON.stringify({status:'posting',url:null}));process.stderr.write('Confirmation unavailable');process.exitCode=1;}
+else{fs.writeFileSync(r.receipt,JSON.stringify({status:'uploaded',url:'https://www.tiktok.com/@creator/video/1234567890123456789'}));process.stdout.write('{}');}
+"#).unwrap();
+    Arc::get_mut(&mut rig.engine).unwrap().upload_runner = stub;
+    let e = &rig.engine;
+    let ctl = AtomicBool::new(false);
+    let job = "upload-test";
+    std::fs::create_dir_all(e.root.join("work").join(job)).unwrap();
+    assert!(e.prepare_auto_upload(job, &ctl).unwrap().is_empty());
+    assert!(!e.root.join("exports/calls.txt").exists());
+    e.uploads.lock().unwrap().accounts = vec![
+        UploadAccount {
+            platform: "tiktok".into(),
+            id: "creator".into(),
+            label: "@creator".into(),
+        },
+        UploadAccount {
+            platform: "youtube".into(),
+            id: "UCtest".into(),
+            label: "Test channel".into(),
+        },
+    ];
+    e.preferences.lock().unwrap().auto_upload = true;
+    let accounts = e.prepare_auto_upload(job, &ctl).unwrap();
+    let folder = e.root.join("exports/fixture");
+    std::fs::create_dir(&folder).unwrap();
+    let original = folder.join("original.mp4");
+    std::fs::copy(&fixture, &original).unwrap();
+    std::fs::write(
+        folder.join("metadata.json"),
+        r#"{"title":"Title","description":"Description #gta6"}"#,
+    )
+    .unwrap();
+    assert!(e
+        .upload_clone_file("source", &original, &accounts, job, &ctl)
+        .is_err());
+    assert_eq!(
+        std::fs::read(&original).unwrap(),
+        std::fs::read(fixture).unwrap()
+    );
+    let (_, width, height) = e.probe(&folder.join("upload.mp4")).unwrap();
+    assert_eq!((width, height), (1080, 1920));
+    let records = e.uploads.lock().unwrap().records.clone();
+    assert_eq!(records[0].status, "uploaded");
+    assert_eq!(records[1].status, "uncertain");
+    let calls = std::fs::read_to_string(e.root.join("exports/calls.txt")).unwrap();
+    assert!(e
+        .upload_clone_file("source", &original, &accounts, job, &ctl)
+        .is_err());
+    assert_eq!(
+        std::fs::read_to_string(e.root.join("exports/calls.txt")).unwrap(),
+        calls
+    );
+    e.confirm_upload(&records[1].id, false).unwrap();
+    assert_eq!(e.uploads.lock().unwrap().records[1].status, "failed");
+    assert!(e
+        .upload_clone_file("source", &original, &accounts, job, &ctl)
+        .is_err());
+    let calls = std::fs::read_to_string(e.root.join("exports/calls.txt")).unwrap();
+    assert_eq!(calls.matches("upload:tiktok").count(), 1);
+    assert_eq!(calls.matches("upload:youtube").count(), 2);
+    e.confirm_upload(&records[1].id, true).unwrap();
+    e.upload_clone_file("source", &original, &accounts, job, &ctl)
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(e.root.join("exports/calls.txt")).unwrap(),
+        calls
+    );
+}

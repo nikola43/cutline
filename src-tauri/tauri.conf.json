@@ -26,7 +26,8 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$APPDATA/**"
+          "$APPDATA/library/**",
+          "$APPDATA/exports/**"
         ]
       }
     }
@@ -37,7 +38,9 @@
       "app"
     ],
     "resources": {
-      "../.tools/bundled/": "tools/"
+      "../.tools/bundled/": "tools/",
+      "../uploader/": "uploader/",
+      "../node_modules/playwright-core/": "uploader/node_modules/playwright-core/"
     },
     "icon": [
       "icons/icon.icns",

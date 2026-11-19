@@ -38,7 +38,7 @@ exports/package-<job-id>/
 
 `manifest.json` records completed clips and a `running`, `completed`, `failed`, or `cancelled` status. Completed clips survive failures or cancellation of later clips. A partial video is named `video.partial.mp4` until its metadata has been written. Existing exports are never overwritten. Exported videos also appear in **Biblioteca**.
 
-Cutline prepares files; uploading and publishing are performed by the user. YouTube/TikTok text files do not configure account-specific upload settings.
+The standard clip editor prepares files for manual upload. Clone also supports optional automatic uploads to connected TikTok and YouTube accounts. YouTube/TikTok text files do not configure account-specific upload settings.
 
 ## Clone: discover and download popular videos
 
@@ -61,6 +61,21 @@ Downloads request the best available video/audio streams, prioritizing resolutio
 Each batch is saved under `exports/clone-<job-id>/`. Numbered folders contain the video, `metadata.json`, the original `titulo.txt` and `descricao.txt`, and `origem.txt` with the source URL. The manifest records successful files and failures. Existing downloads survive later failures or cancellation, and successful batches open their folder automatically. **Abrir downloads** also works after restarting the app.
 
 Clone search uses the AI selected in **Configurações**: ChatGPT Codex with the existing subscription login, or a local Ollama vision model. For local checks, select **gemma3:4b** and press **Preparar IA local**; the default text-only `gemma3:1b` cannot inspect frames. Codex mode sends the metadata and six sampled frames to OpenAI; local mode sends them only to the local Ollama server. No API key is required. Direct URL downloads skip topic verification and require no AI. Downloads use public access by default. For YouTube sign-in errors, select your signed-in browser in **Configurações → YouTube → Sessão do navegador**. Private or platform-blocked videos can still fail. The direct URL option remains available if public search returns nothing. A search HTTP request can take up to 25 seconds to return after cancellation. These original-quality downloads may need conversion through **Criar clipes → Arquivo ou projeto** for MP4 upload compatibility.
+
+## Automatic uploads from Clone
+
+1. In **Configurações → Upload automático**, use **Abrir login TikTok** and **Abrir login YouTube** to sign in normally in the dedicated Chrome profile. Complete platform confirmations yourself.
+2. Quit that dedicated Chrome session using Chrome’s Quit command (⌘Q on macOS), then press **Verificar conexão** for each platform. The connected TikTok handle and YouTube channel identifier/name are shown. Your usual Chrome session stays separate.
+3. Choose **Privado** (default) or **Público**, return to Clone, and enable **Upload automático**.
+4. **Buscar, baixar e enviar** searches, verifies content, downloads an original, prepares a vertical H.264/AAC MP4, and sends it to TikTok and YouTube Shorts before continuing to the next video. Selected/direct Clone downloads follow the same toggle. **Somente buscar** never uploads.
+
+Turning the toggle off during a batch prevents subsequent uploads; an upload already in progress may finish. Cancel stops the whole job. The app preserves originals, metadata, and successful downloads. A prepared `upload.mp4` sits alongside the original, uses the existing GPU/CPU export path, and does not add captions or alter the original file. This flow accepts videos up to three minutes and sets YouTube's audience to **not made for kids**. Titles/descriptions are taken from source metadata; review them before choosing public uploads.
+
+The uploader uses the normal Studio browser interfaces through bundled Playwright, with Chrome and Node.js installed locally. It uses a separate persistent profile as required by [Chrome/Playwright's profile guidance](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-persistent-context). Login itself opens a normal Chrome window. Account sessions remain in the private application-data directory; they are never exported, committed, sent to AI, or exposed through the app's media asset scope. No developer API credentials are required for this browser workflow.
+
+Both accounts are checked before downloading. Each upload verifies the target account and chosen visibility and requires a success screen before recording success. History is persisted independently for each source/platform/account. Confirmed uploads are skipped on retries. If a process ends after file transfer starts without confirmation, the result is **Confira na plataforma** and automatic retry is blocked. Check the correct account in Studio; **Já foi enviado — não reenviar** records your confirmation. If you verified it was not sent, **Não foi enviado — permitir tentativa** unlocks a new attempt; **Repetir download e envio** retries a failed source and skips destinations already confirmed. Failed/uncertain jobs preserve their files and error details. There is no automatic retry of a final publish action, login challenge, or platform limit.
+
+**Current validation limit:** browser steps were tested against controlled Studio-shaped fixtures, not by publishing to live accounts. Login, account menus, upload controls and confirmation screens can change; unsupported screens stop the task instead of claiming success. A 10,000-video selection does not override account upload limits. The history stores account identifiers and publication outcomes, not credentials. `uploads.json` corruption is reported rather than silently discarding duplicate protection.
 
 ## YouTube session
 
