@@ -6,7 +6,7 @@ export interface CaptionStyle {preset:string;font:string;size:number;color:strin
 export interface Preferences {encoder:string;aiMode:'local'|'codex';localModel:string;captions:CaptionStyle}
 export interface Encoder {id:string;label:string;available:boolean;detail:string}
 export interface Live {id:string;title:string;url:string;provider:string;embedUrl:string|null;phase:string;startedAt:number;bufferSeconds:number;encoder:string}
-export interface CloneVideo {id:string;url:string;title:string;provider:string;creator:string;views:number;approximateViews:boolean;duration:number|null;thumbnail:string|null}
+export interface CloneVideo {id:string;url:string;title:string;provider:string;creator:string;views:number;approximateViews:boolean;duration:number|null;thumbnail:string|null;tags:string[];verification:{topic:string;evidence:string;confidence:number}|null}
 export interface Discovery {query:string;minViews:number;searchedAt:number;videos:CloneVideo[];warnings:string[]}
 export interface Snapshot {discovery:Discovery;library:Media[];jobs:Job[];live:Live|null;tools:{name:string;path:string|null;ready:boolean}[];encoders:Encoder[];preferences:Preferences;activeEncoder:string;outputDir:string}
 export interface SourceInfo {url:string;id:string;title:string;provider:string;duration:number|null;isLive:boolean;thumbnail:string|null;channel:string}

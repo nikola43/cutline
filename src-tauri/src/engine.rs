@@ -173,10 +173,15 @@ impl Engine {
             .ok()
             .and_then(|d| serde_json::from_slice(&d).ok())
             .unwrap_or_default();
-        let discovery = fs::read(root.join("clone-search.json"))
+        let mut discovery: crate::discovery::Discovery = fs::read(root.join("clone-search.json"))
             .ok()
             .and_then(|data| serde_json::from_slice(&data).ok())
             .unwrap_or_default();
+        let old_count = discovery.videos.len();
+        discovery.videos.retain(|v| v.verification.is_some());
+        if old_count != discovery.videos.len() {
+            discovery.warnings = vec!["Resultados antigos sem análise de conteúdo foram ocultados. Faça uma nova busca para verificar os vídeos.".into()];
+        }
         let tools = Tools::discover(resources);
         let encoders = hardware::detect(tools.ffmpeg.as_deref());
         Ok(Arc::new(Self {

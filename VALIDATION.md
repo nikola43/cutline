@@ -5,8 +5,8 @@ Host: Apple M1 Pro, macOS, native arm64 build.
 Passed:
 
 - TypeScript and Vite production build; Rust check and formatting.
-- Eight Rust unit tests covering URL/range validation, contiguous completed replay segments, GPU flags, caption escaping/timing, bounded speech candidates, and platform upload metadata validation.
-- Nine browser tests covering both AI modes, save failures, caption draft persistence across polling, editor/export commands, replay controls, all eleven screens at 320/768/1024/1440 px, one-click generation, stage/download percentages, cancellation, advanced input validation, and exactly-once folder-opening commands for packages/manual exports.
+- Nine Rust unit tests covering URL/range validation, contiguous completed replay segments, GPU flags, caption escaping/timing, bounded speech candidates, and platform upload metadata validation.
+- Ten browser tests covering both AI modes, save failures, caption draft persistence across polling, editor/export commands, replay controls, all eleven screens at 320/768/1024/1440 px, one-click generation, stage/download percentages, cancellation, advanced input validation, and exactly-once folder-opening commands for packages/manual exports.
 - Actual FFmpeg import; original, square and vertical exports with burned captions; output dimensions and durations; multi-highlight export; cancellation; a deliberately unavailable GPU falling back to CPU.
 - Real-time local fixture recording: saved 30- and 60-second replays with checked durations, then stopped and saved the full recording. Apple VideoToolbox passed its hardware probe.
 - Real YouTube download/import using the previously supplied video URL; real Kick live capture from a currently live public channel, then stop/save.
@@ -41,3 +41,17 @@ Clone update:
 - Browser checks passed for the Clone defaults, one-click discovery/download, search-only mode, selected downloads, source links, failure visibility, input bounds, and responsive layouts. The existing seven browser checks also passed.
 - A controlled downloader fixture verified the maximum-quality format/sort arguments and byte-identical file retention when a later video in the batch failed. The manifest recorded the completed download and the failure separately.
 - TikTok keyword search relies on a public video index and verifies counts with yt-dlp. An initial domain-operator query returned unrelated results; the working implementation uses a topic query plus a second phrasing when no TikTok links are found. Discovery remains bounded to 30 Shorts per topic and 12 TikTok candidates per search, and cannot guarantee platform-wide top results.
+
+
+Clone relevance update:
+
+- Topics remain editable during active work and are saved across navigation and reloads. The default is now GTA 6 alone; separate `gaming` searches previously admitted unrelated games. All ten browser checks passed, including editable/persisted topics, topic bounds, evidence cards, and existing flows.
+- Nine Rust unit checks passed. Added regression cases for GTA VI / Grand Theft Auto VI aliases, GTA V and GTA 60 exclusions, misleading hashtags, missing/negative/low-confidence/mismatched-topic AI responses, and current Shorts search metadata parsing.
+- A real public YouTube keyword search returned 25 Shorts candidates through the Rust backend. Full YouTube preview downloads were blocked by the platform's sign-in/bot check during validation. These candidates are excluded with an error rather than approved from hashtags. No credentials or bypass were used.
+- The actual FFmpeg → six frames → ChatGPT Codex path accepted a public TikTok GTA VI trailer discussion with concrete visible evidence and rejected a generated test-pattern video despite misleading GTA 6 title/hashtags. Disposable previews were removed. The same AI transport still returned the expected text-only highlight schema.
+- Partial original-download recovery still passed and retained the completed file byte-for-byte. Maximum-quality export arguments remain unchanged.
+- Verification checks metadata and six sampled frames, not the complete audiovisual sequence. Model scores are self-reported and relevance/authenticity are not guaranteed. At most 12 candidates undergo deeper verification; videos longer than three minutes and inconclusive results are excluded. Speech-only relevance is not evaluated.
+- Local Ollama vision transport is implemented with an explicit capability check and a gemma3:4b setup option. A full local vision inference was not run on this host; the existing small text model cannot evaluate images. Native UI click-through remains unverified because of the existing Accessibility permission limitation.
+
+- The complete live TikTok discovery → metadata/topic filtering → frame verification → original-download workflow passed in 269 seconds. Two candidates passed the visual check. The leading result reported 4.4 million views and retained 1080×1920, 7.9-second H.265 source quality (`bytevc1_1080p_2284499-1`).
+- The updated macOS release bundle built, passed strict signature verification, and replaced the Desktop app with the previous bundle retained as a local backup. Cutline relaunched successfully; existing app data and downloaded files were preserved.

@@ -618,11 +618,12 @@ fn youtube_generates_upload_package() {
 }
 
 #[test]
-#[ignore = "uses public YouTube Shorts and TikTok discovery and downloads real original streams"]
+#[ignore = "uses public discovery, ChatGPT Codex visual verification and original downloads"]
 fn clone_discovers_and_downloads_both_platforms() {
     use cutline_lib::discovery::CloneRequest;
     let rig = Rig::new();
     let e = &rig.engine;
+    e.preferences.lock().unwrap().ai_mode = "codex".into();
     for platform in ["youtube", "tiktok"].into_iter().filter(|platform| {
         std::env::var("CUTLINE_TEST_CLONE_PLATFORM")
             .map(|p| p == *platform)
@@ -635,7 +636,7 @@ fn clone_discovers_and_downloads_both_platforms() {
             count: 1,
             download: false,
         };
-        let searched = wait(e, &e.clone_search(request).unwrap(), 900);
+        let searched = wait(e, &e.clone_search(request).unwrap(), 1800);
         assert_eq!(
             searched.status,
             "completed",
@@ -650,6 +651,10 @@ fn clone_discovers_and_downloads_both_platforms() {
             result.warnings
         );
         assert!(result.videos.iter().all(|v| v.views >= 100000));
+        assert!(result.videos.iter().all(|v| v
+            .verification
+            .as_ref()
+            .is_some_and(|r| r.topic == "GTA 6" && r.confidence >= 0.9)));
         assert!(result
             .videos
             .windows(2)
@@ -767,4 +772,71 @@ printf 'cutline-file:"%s"\n' "$output"
     );
     assert!(folder.join("01/metadata.json").is_file());
     assert!(folder.join("01/origem.txt").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "uses a public TikTok preview, FFmpeg and ChatGPT Codex image classification"]
+fn clone_checks_video_frames_and_rejects_misleading_hashtags() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut rig = Rig::new();
+    rig.engine.preferences.lock().unwrap().ai_mode = "codex".into();
+    let ctl = AtomicBool::new(false);
+    let job = "clone-content-check";
+    let work = rig.engine.root.join("work").join(job);
+    std::fs::create_dir(&work).unwrap();
+    {
+        let e = &rig.engine;
+        e.ensure_vision_ai(&ctl).unwrap();
+        let url = "https://www.tiktok.com/@typicalgamer/video/7709601310600908084";
+        let mut cmd = e.tools.ytdlp().unwrap();
+        cmd.args(["--skip-download", "--dump-single-json", "--", url]);
+        let info: serde_json::Value = serde_json::from_str(
+            &e.run(cmd, &ctl, Duration::from_secs(90), None, None)
+                .unwrap(),
+        )
+        .unwrap();
+        let verified = e
+            .verify_clone_content(url, &info, &["GTA 6".into()], job, &ctl)
+            .unwrap();
+        println!("TikTok: title={} verified={verified:?}", info["title"]);
+        assert!(
+            verified.is_some(),
+            "Known GTA 6 discussion should have supporting visible evidence"
+        );
+        assert!(!work.join("clone-preview").exists());
+        let answer = e
+            .ask_ai(
+                "Return clips: [] because no speech candidates were supplied.",
+                job,
+                &ctl,
+            )
+            .unwrap();
+        assert_eq!(answer["clips"], serde_json::json!([]));
+    }
+    let fixture = rig.fixture();
+    let stub = rig.engine.root.join("preview-fixture.sh");
+    let script = format!(
+        r#"#!/bin/sh
+previous=''
+output=''
+for argument do
+    [ "$previous" = '-o' ] && output="$argument"
+    previous="$argument"
+done
+output="${{output%.*}}.mp4"
+cp '{fixture}' "$output" || exit 6
+printf 'cutline-file:"%s"\n' "$output"
+"#,
+        fixture = fixture.replace('\'', "'\\''")
+    );
+    std::fs::write(&stub, script).unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    Arc::get_mut(&mut rig.engine).unwrap().tools.ytdlp = Some(stub);
+    let verdict = rig.engine.verify_clone_content("https://www.youtube.com/shorts/abcdefghijk", &serde_json::json!({"title":"GTA 6 Official gameplay","description":"#gta6 #GTAVI","tags":["gta6"],"duration":8}), &["GTA 6".into()], job, &ctl).unwrap();
+    assert!(
+        verdict.is_none(),
+        "Misleading GTA 6 tags must not approve a video of test patterns"
+    );
+    assert!(!work.join("clone-preview").exists());
 }
