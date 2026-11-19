@@ -13,6 +13,13 @@ async function desktop(page:Page){
       if(command==='save_preferences'){if(w.testFailSave)throw 'Save failed';state.preferences=args.preferences;return;}
       if(command==='inspect_source')return {url:args.url,id:'video-1',title:'Vídeo remoto',provider:'YouTube',duration:120,isLive:false,thumbnail:null,channel:'Canal'};
       if(command==='generate_package'){if(w.testSlowImport)return 'job-progress';state.jobs=[{id:'job-1',kind:'package',label:'5 clipes prontos',status:'completed',message:'Concluído',progress:1,outputId:'clip-1',outputDir:'/exports/package-1',createdAt:1700000000}];return 'job-1';}
+      if(command==='clone_search'){
+        state.discovery={query:args.request.query,minViews:args.request.minViews,searchedAt:1700000002,videos:[
+          {id:'YouTube:abcdefghijk',url:'https://www.youtube.com/shorts/abcdefghijk',title:'GTA 6: melhor momento',provider:'YouTube',creator:'gaming',views:2000000,approximateViews:true,duration:null,thumbnail:null},
+          {id:'TikTok:1234567890123456789',url:'https://www.tiktok.com/@gaming/video/1234567890123456789',title:'Jogada incrível',provider:'TikTok',creator:'gaming',views:500000,approximateViews:false,duration:35,thumbnail:null}],warnings:[]};
+        state.jobs=[{id:'clone-job',kind:args.request.download?'clone_download':'clone_search',label:'Clone',status:'completed',message:'Concluído',progress:1,outputId:null,outputDir:args.request.download?'/exports/clone-1':null,createdAt:1700000002}];return 'clone-job';
+      }
+      if(command==='clone_download'){state.jobs=[{id:'clone-download-2',kind:'clone_download',label:'Clone · vídeos salvos',status:'completed',message:'Concluído',progress:1,outputId:null,outputDir:'/exports/clone-2',createdAt:1700000003}];return 'clone-download-2';}
       if(command==='get_ai_status')return {whisperReady:true,modelReady:true,localModels:['gemma3:1b'],codexInstalled:true,codexLoggedIn:true,codexStatus:'Connected'};
       if(command==='get_transcript')return [{start:1,end:2,text:'Teste'},{start:2,end:3,text:'legenda'}];
       if(command==='get_highlights')return [{id:'1',start:10,end:40,title:'Primeiro momento',reason:'Ideia completa',score:91},{id:'2',start:50,end:80,title:'Segundo momento',reason:'Surpresa',score:87}];
@@ -68,7 +75,7 @@ test('all screens render without page errors or horizontal overflow',async({page
   const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await desktop(page);
   for(const width of [1440,1024,768,320]){
     await page.setViewportSize({width,height:1000});
-    for(const name of ['Dashboard','Criar clipes','Meus projetos','Biblioteca','Modelos','Legendas','Editor de vídeo','Lives e replay','Configurações','Ajuda']){
+    for(const name of ['Dashboard','Criar clipes','Clone','Meus projetos','Biblioteca','Modelos','Legendas','Editor de vídeo','Lives e replay','Configurações','Ajuda']){
       await page.getByRole('button',{name:new RegExp('^'+name)}).first().click();
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),`${name} at ${width}px`).toBe(true);
       if(width===1440)await page.screenshot({path:`test-results/screens/${name.replaceAll(' ','-')}.png`,fullPage:true});
@@ -128,4 +135,41 @@ test('manual export opens its folder and advanced options validate before starti
   await expect(page.getByRole('button',{name:'Gerar clipes prontos',exact:true})).toBeEnabled();
   await page.evaluate(()=>{(window as any).testState.jobs=[{id:'manual-export',kind:'export',label:'Exportar clipe',status:'completed',message:'Concluído',progress:1,outputId:'clip-1',outputDir:null,createdAt:1700000001}]});
   await expect.poll(()=>page.evaluate(()=>(window as any).testCalls.some((c:any)=>c.command==='reveal_job_output'&&c.args.id==='manual-export'))).toBe(true);
+});
+
+test('Clone discovers high-view videos, auto-downloads defaults, and exposes source links',async({page})=>{
+  await desktop(page);await page.getByRole('button',{name:'Clone',exact:true}).click();
+  await expect(page.getByRole('textbox',{name:'Temas'})).toHaveValue('GTA 6, gaming');
+  await page.getByRole('button',{name:'Buscar e baixar',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'GTA 6: melhor momento'})).toBeVisible();
+  const calls=await page.evaluate(()=>(window as any).testCalls);
+  expect(calls).toContainEqual({command:'clone_search',args:{request:{query:'GTA 6, gaming',platform:'both',minViews:100000,count:5,download:true}}});
+  await expect.poll(()=>page.evaluate(()=>(window as any).testCalls.some((c:any)=>c.command==='reveal_job_output'&&c.args.id==='clone-job'))).toBe(true);
+  await page.getByRole('checkbox',{name:'Selecionar Jogada incrível'}).check();
+  await page.getByRole('button',{name:'Baixar selecionados (1)'}).click();
+  expect(await page.evaluate(()=>(window as any).testCalls)).toContainEqual({command:'clone_download',args:{urls:['https://www.tiktok.com/@gaming/video/1234567890123456789']}});
+  await page.getByRole('button',{name:'Ver original: GTA 6: melhor momento'}).click();
+  expect(await page.evaluate(()=>(window as any).testCalls)).toContainEqual({command:'open_clone_source',args:{url:'https://www.youtube.com/shorts/abcdefghijk'}});
+  for(const width of [1440,768,320]){
+    await page.setViewportSize({width,height:1000});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+    if(width===1440){await expect(page.locator('.clone-progress')).toContainText('Clone · vídeos salvos');await page.locator('main').evaluate(el=>el.scrollTo(0,0));await page.screenshot({path:'test-results/clone-results.png',fullPage:true});}
+  }
+});
+
+test('Clone search-only never opens a folder; invalid input and source failures stay visible',async({page})=>{
+  await desktop(page);await page.getByRole('button',{name:'Clone',exact:true}).click();
+  await page.getByRole('spinbutton',{name:'Vídeos para baixar'}).fill('11');
+  await expect(page.getByRole('button',{name:'Buscar e baixar',exact:true})).toBeDisabled();
+  await page.getByRole('spinbutton',{name:'Vídeos para baixar'}).fill('2');
+  await page.getByRole('combobox',{name:'Plataformas'}).selectOption('tiktok');
+  await page.getByRole('button',{name:'Somente buscar',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Jogada incrível'})).toBeVisible();
+  const calls=await page.evaluate(()=>(window as any).testCalls);
+  expect(calls).toContainEqual({command:'clone_search',args:{request:{query:'GTA 6, gaming',platform:'tiktok',minViews:100000,count:2,download:false}}});
+  expect(calls.some((c:any)=>c.command==='reveal_job_output')).toBe(false);
+  await page.evaluate(()=>{const s=(window as any).testState;s.discovery.warnings=['TikTok: um vídeo ficou indisponível.'];s.jobs[0].status='failed';s.jobs[0].message='Nenhum vídeo encontrado';});
+  await expect(page.getByText('TikTok: um vídeo ficou indisponível.')).toBeVisible();
+  await expect(page.locator('.clone-progress')).toContainText('Nenhum vídeo encontrado');
+  await expect(page.getByRole('button',{name:'Buscar e baixar',exact:true})).toBeEnabled();
 });

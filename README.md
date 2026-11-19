@@ -40,6 +40,24 @@ exports/package-<job-id>/
 
 Cutline prepares files; uploading and publishing are performed by the user. YouTube/TikTok text files do not configure account-specific upload settings.
 
+## Clone: discover and download popular videos
+
+![Clone search and downloads](docs/clone.png)
+
+Open **Clone** for TikTok and YouTube Shorts discovery. The defaults are **GTA 6, gaming**, at least **100,000 views**, and **five downloads**. Enter up to three comma-separated topics, select either or both platforms, then:
+
+- **Buscar e baixar** discovers videos, ranks qualifying results by reported view count, and downloads up to the requested number.
+- **Somente buscar** shows results first. Download an individual video or select up to ten for a batch.
+- **Já tem um link?** accepts a canonical public TikTok video or YouTube Shorts URL directly.
+
+YouTube discovery checks the first 30 videos in each topic's Shorts hashtag feed. Spaces are removed to form the hashtag (`GTA 6` → `gta6`). TikTok discovery uses public Bing video search to find TikTok URLs, then checks video metadata through yt-dlp. Up to 12 TikTok candidates are checked per search. Counts from YouTube's compact feed labels are marked **≈**; unavailable counts are excluded. Results are ranked within this bounded sample, not across the entire platform. Platform/index availability and view counts can change; partial search failures appear in the screen.
+
+Downloads request the best available video/audio streams, prioritizing resolution, frame rate, then bitrate. There is no 1080p cap, upscale, re-encode, or watermark-removal step. Separate streams are merged losslessly into MKV when needed; a single original stream retains its available container. This uses yt-dlp's [format selection and sorting](https://github.com/yt-dlp/yt-dlp#format-selection). The best available quality can be lower than the creator's original upload.
+
+Each batch is saved under `exports/clone-<job-id>/`. Numbered folders contain the video, `metadata.json`, the original `titulo.txt` and `descricao.txt`, and `origem.txt` with the source URL. The manifest records successful files and failures. Existing downloads survive later failures or cancellation, and successful batches open their folder automatically. **Abrir downloads** also works after restarting the app.
+
+Clone needs no AI model or API key. It downloads public videos without using browser credentials; private or platform-blocked videos may fail. The direct URL option remains available if public search returns nothing. A search HTTP request can take up to 25 seconds to return after cancellation. These original-quality downloads may need conversion through **Criar clipes → Arquivo ou projeto** for MP4 upload compatibility.
+
 ## AI modes
 
 **Local:** whisper.cpp transcribes speech; Ollama ranks transcript excerpts and supplies Portuguese titles, descriptions, hashtags, and selection reasons. The default models are multilingual Whisper base (148 MB, checksum verified) and `gemma3:1b` (approximately 0.8 GB). Once installed, these models can process local files without a cloud AI service. Other already-installed Ollama models can be selected. Cutline starts a localhost-only Ollama server if needed and stops only the server it started.

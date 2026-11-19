@@ -616,3 +616,155 @@ fn youtube_generates_upload_package() {
         metadata["title"]
     );
 }
+
+#[test]
+#[ignore = "uses public YouTube Shorts and TikTok discovery and downloads real original streams"]
+fn clone_discovers_and_downloads_both_platforms() {
+    use cutline_lib::discovery::CloneRequest;
+    let rig = Rig::new();
+    let e = &rig.engine;
+    for platform in ["youtube", "tiktok"].into_iter().filter(|platform| {
+        std::env::var("CUTLINE_TEST_CLONE_PLATFORM")
+            .map(|p| p == *platform)
+            .unwrap_or(true)
+    }) {
+        let request = CloneRequest {
+            query: "GTA 6".into(),
+            platform: platform.into(),
+            min_views: 100000,
+            count: 1,
+            download: false,
+        };
+        let searched = wait(e, &e.clone_search(request).unwrap(), 900);
+        assert_eq!(
+            searched.status,
+            "completed",
+            "{}; warnings: {:?}",
+            searched.message,
+            e.snapshot().discovery.warnings
+        );
+        let result = e.snapshot().discovery;
+        assert!(
+            !result.videos.is_empty(),
+            "No results for {platform}: {:?}",
+            result.warnings
+        );
+        assert!(result.videos.iter().all(|v| v.views >= 100000));
+        assert!(result
+            .videos
+            .windows(2)
+            .all(|pair| pair[0].views >= pair[1].views));
+        let chosen = &result.videos[0];
+        println!(
+            "{platform}: {} candidates; top {} views: {}",
+            result.videos.len(),
+            chosen.views,
+            chosen.url
+        );
+        let mut cmd = e.tools.ytdlp().unwrap();
+        cmd.args([
+            "--skip-download",
+            "--dump-single-json",
+            "-f",
+            "bestvideo*+bestaudio/best",
+            "--format-sort-force",
+            "-S",
+            "res,fps,br",
+            "--",
+            &chosen.url,
+        ]);
+        let info: serde_json::Value = serde_json::from_str(
+            &e.run(
+                cmd,
+                &AtomicBool::new(false),
+                Duration::from_secs(90),
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let expected_width = info["width"].as_u64().unwrap();
+        let expected_height = info["height"].as_u64().unwrap();
+        let done = complete(e, &e.clone_download(vec![chosen.url.clone()]).unwrap(), 300);
+        let folder = e.job_output_dir(&done.id).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(folder.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["status"], "completed");
+        let file = folder.join(manifest["videos"][0]["file"].as_str().unwrap());
+        let (duration, width, height) = e.probe(&file).unwrap();
+        assert!(duration > 0.0);
+        assert_eq!(
+            (width as u64, height as u64),
+            (expected_width, expected_height)
+        );
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(folder.join("01/metadata.json")).unwrap())
+                .unwrap();
+        assert_eq!(metadata["format_id"], info["format_id"]);
+        assert!(folder.join("01/titulo.txt").is_file());
+        assert!(folder.join("01/origem.txt").is_file());
+        println!(
+            "{platform}: original download verified {width}x{height}, {:.1}s, format {}",
+            duration, metadata["format_id"]
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires FFmpeg; verifies original download settings and partial batch recovery without network"]
+fn clone_preserves_completed_downloads_when_next_video_fails() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut rig = Rig::new();
+    let fixture = rig.fixture();
+    let stub = rig.engine.root.join("download-fixture.sh");
+    let script = format!(
+        r#"#!/bin/sh
+previous=''
+output=''
+format=''
+sorting=''
+for argument do
+    case "$previous" in
+        -o) output="$argument" ;;
+        -f) format="$argument" ;;
+        -S) sorting="$argument" ;;
+    esac
+    previous="$argument"
+done
+[ "$format" = 'bestvideo*+bestaudio/best' ] || exit 8
+[ "$sorting" = 'res,fps,br' ] || exit 9
+case "$previous" in *failfailfai) printf '%s\n' 'Video unavailable' >&2; exit 7 ;; esac
+output="${{output%.*}}.mp4"
+cp '{fixture}' "$output" || exit 6
+printf '%s\n' '{{"title":"Fixture video","description":"Original description","format_id":"original"}}' > "$(dirname "$output")/metadata.json"
+printf 'cutline-file:"%s"\n' "$output"
+"#,
+        fixture = fixture.replace('\'', "'\\''")
+    );
+    std::fs::write(&stub, script).unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    Arc::get_mut(&mut rig.engine).unwrap().tools.ytdlp = Some(stub);
+    let e = &rig.engine;
+    let id = e
+        .clone_download(vec![
+            "https://www.youtube.com/shorts/abcdefghijk".into(),
+            "https://www.youtube.com/shorts/failfailfai".into(),
+        ])
+        .unwrap();
+    let job = wait(e, &id, 30);
+    assert_eq!(job.status, "failed");
+    let folder = e.job_output_dir(&id).unwrap();
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(folder.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["status"], "failed");
+    assert_eq!(manifest["videos"].as_array().unwrap().len(), 1);
+    assert_eq!(manifest["failures"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        std::fs::read(folder.join("01/video.mp4")).unwrap(),
+        std::fs::read(fixture).unwrap()
+    );
+    assert!(folder.join("01/metadata.json").is_file());
+    assert!(folder.join("01/origem.txt").is_file());
+}

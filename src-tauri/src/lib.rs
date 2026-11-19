@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod discovery;
 pub mod engine;
 pub mod hardware;
 pub mod media;
@@ -9,6 +10,21 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
+#[tauri::command]
+fn clone_search(engine: State<Arc<Engine>>, request: discovery::CloneRequest) -> Result<String> {
+    engine.inner().clone_search(request)
+}
+#[tauri::command]
+fn clone_download(engine: State<Arc<Engine>>, urls: Vec<String>) -> Result<String> {
+    engine.inner().clone_download(urls)
+}
+#[tauri::command]
+fn open_clone_source(app: tauri::AppHandle, url: String) -> Result<()> {
+    let (url, _) = discovery::clone_url(&url)?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(engine::err)
+}
 #[tauri::command]
 fn get_snapshot(engine: State<Arc<Engine>>) -> Snapshot {
     engine.snapshot()
@@ -178,6 +194,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
+            clone_search,
+            clone_download,
+            open_clone_source,
             inspect_source,
             import_local,
             import_url,

@@ -90,6 +90,7 @@ pub struct LiveSession {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    pub discovery: crate::discovery::Discovery,
     pub library: Vec<Media>,
     pub jobs: Vec<Job>,
     pub live: Option<LiveSession>,
@@ -105,6 +106,7 @@ pub struct Engine {
     pub tools: Tools,
     pub encoders: Vec<Encoder>,
     pub preferences: Mutex<Preferences>,
+    pub discovery: Mutex<crate::discovery::Discovery>,
     pub library: Mutex<Vec<Media>>,
     pub jobs: Mutex<Vec<Job>>,
     pub controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
@@ -171,6 +173,10 @@ impl Engine {
             .ok()
             .and_then(|d| serde_json::from_slice(&d).ok())
             .unwrap_or_default();
+        let discovery = fs::read(root.join("clone-search.json"))
+            .ok()
+            .and_then(|data| serde_json::from_slice(&data).ok())
+            .unwrap_or_default();
         let tools = Tools::discover(resources);
         let encoders = hardware::detect(tools.ffmpeg.as_deref());
         Ok(Arc::new(Self {
@@ -178,6 +184,7 @@ impl Engine {
             tools,
             encoders,
             preferences: Mutex::new(preferences),
+            discovery: Mutex::new(discovery),
             library: Mutex::new(library),
             jobs: Mutex::new(Vec::new()),
             controls: Mutex::new(HashMap::new()),
@@ -200,6 +207,7 @@ impl Engine {
         let preferences = self.preferences.lock().unwrap().clone();
         let active_encoder = self.encoder().label;
         Snapshot {
+            discovery: self.discovery.lock().unwrap().clone(),
             library,
             jobs,
             live,
